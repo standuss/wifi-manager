@@ -9,15 +9,20 @@ use WifiManager\Services\JobProcessor;
 
 $loggingMatch = new ReflectionMethod(JobProcessor::class, 'loggingActionMatches');
 $modern = $loggingMatch->invoke(null, [
-    'name' => 'wifimanager-remote',
+    'name' => 'wifimanagerRemote',
     'remote-port' => '192.0.2.10:5514',
 ], '192.0.2.10', 5514, '192.0.2.10:5514');
 $legacy = $loggingMatch->invoke(null, [
+    'name' => 'wifimanagerRemote',
+    'remote' => '192.0.2.10',
+    'remote-port' => '5514',
+], '192.0.2.10', 5514, '192.0.2.10:5514');
+$oldName = $loggingMatch->invoke(null, [
     'name' => 'wifimanager-remote',
     'remote' => '192.0.2.10',
     'remote-port' => '5514',
 ], '192.0.2.10', 5514, '192.0.2.10:5514');
-if ($modern !== true || $legacy !== true) {
+if ($modern !== true || $legacy !== true || $oldName !== true) {
     throw new RuntimeException('Kompatibilita endpointu vzdáleného logování selhala.');
 }
 

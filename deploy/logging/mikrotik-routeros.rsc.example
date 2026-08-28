@@ -2,23 +2,23 @@
 # TCP/CEF je preferovaný pro centrální router. Starší CAP může použít UDP port 514.
 
 /system logging action
-add name=wifimanager-cef target=remote remote-port=SERVER_IP:5514 remote-protocol=tcp remote-log-format=cef cef-event-delimiter="\r\n"
+add name=wifimanagerRemote target=remote remote=SERVER_IP remote-port=5514 remote-protocol=tcp remote-log-format=cef
 
 /system logging
-add action=wifimanager-cef topics=critical
-add action=wifimanager-cef topics=error
-add action=wifimanager-cef topics=warning
-add action=wifimanager-cef topics=account
-add action=wifimanager-cef topics=system,info
-add action=wifimanager-cef topics=interface,info
-add action=wifimanager-cef topics=caps,info
-add action=wifimanager-cef topics=wireless,info
-add action=wifimanager-cef topics=dhcp,info
+add action=wifimanagerRemote topics=critical
+add action=wifimanagerRemote topics=error
+add action=wifimanagerRemote topics=warning
+add action=wifimanagerRemote topics=account
+add action=wifimanagerRemote topics=system,info
+add action=wifimanagerRemote topics=interface,info
+add action=wifimanagerRemote topics=caps,info
+add action=wifimanagerRemote topics=wireless,info
+add action=wifimanagerRemote topics=dhcp,info
 
 # Nezapínejte plošné firewall,debug logování – rychle zaplní archiv.
 # IPFIX odesílá pouze centrální gateway; CAPy odesílají jen syslog.
 /ip traffic-flow
-set enabled=yes interfaces=WIFI_INTERFACE_1,WIFI_INTERFACE_2 cache-entries=128k active-flow-timeout=1m inactive-flow-timeout=15s packet-sampling=no
+set enabled=yes interfaces=all cache-entries=128k active-flow-timeout=1m inactive-flow-timeout=15s packet-sampling=no
 /ip traffic-flow target
 add dst-address=SERVER_IP port=2055 version=ipfix v9-template-refresh=20 v9-template-timeout=1m src-address=0.0.0.0
 /ip traffic-flow ipfix

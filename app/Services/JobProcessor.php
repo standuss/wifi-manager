@@ -10,6 +10,9 @@ use WifiManager\RouterOS\RouterRepository;
 
 final class JobProcessor
 {
+    private const LOGGING_ACTION_NAME = 'wifimanagerRemote';
+    private const LEGACY_LOGGING_ACTION_NAME = 'wifimanager-remote';
+
     public function __construct(
         private readonly Database $database,
         private readonly RouterFactory $routerFactory,
@@ -72,7 +75,20 @@ final class JobProcessor
         $this->jobs->progress($jobId, 'Nastavuji vzdálený syslog na MikroTiku');
         $actions = $repository->rows('/system/logging/action/print');
         $action = null;
-        foreach ($actions as $row) if (($row['name'] ?? '') === 'wifimanager-remote') $action = $row;
+        $actionName = self::LOGGING_ACTION_NAME;
+        foreach ($actions as $row) {
+            if (($row['name'] ?? '') !== self::LOGGING_ACTION_NAME) continue;
+            $action = $row;
+            break;
+        }
+        if ($action === null) {
+            foreach ($actions as $row) {
+                if (($row['name'] ?? '') !== self::LEGACY_LOGGING_ACTION_NAME) continue;
+                $action = $row;
+                $actionName = self::LEGACY_LOGGING_ACTION_NAME;
+                break;
+            }
+        }
         $legacyLogging = false;
         foreach ($actions as $row) {
             if (array_key_exists('remote', $row)) {
@@ -80,13 +96,13 @@ final class JobProcessor
                 break;
             }
         }
-        $applyLoggingAction = function (bool $legacy) use ($repository, $action, $target, $syslogPort, $remoteEndpoint, $transport): void {
+        $applyLoggingAction = function (bool $legacy) use ($repository, $action, $actionName, $target, $syslogPort, $remoteEndpoint, $transport): void {
             $attributes = [
                 'target' => 'remote',
                 'remote-protocol' => $transport,
                 'remote-log-format' => $transport === 'tcp' ? 'cef' : 'syslog',
-                'syslog-time-format' => 'iso8601',
             ];
+            if ($transport !== 'tcp') $attributes['syslog-time-format'] = 'iso8601';
             if ($legacy) {
                 $attributes['remote'] = $target;
                 $attributes['remote-port'] = (string) $syslogPort;
@@ -94,17 +110,22 @@ final class JobProcessor
                 $attributes['remote-port'] = $remoteEndpoint;
             }
             if ($action === null) {
-                $repository->add('/system/logging/action', ['name' => 'wifimanager-remote'] + $attributes);
+                $repository->add('/system/logging/action', ['name' => $actionName] + $attributes);
             } else {
                 $repository->set('/system/logging/action', (string) $action['.id'], $attributes);
             }
         };
-        try {
+        if ($legacyLogging) {
             $applyLoggingAction($legacyLogging);
-        } catch (RouterOsException) {
-            // RouterOS 7.18+ changed the logging endpoint representation. Some
-            // point releases do not expose enough metadata to detect it first.
-            $applyLoggingAction(!$legacyLogging);
+        } else {
+            try {
+                $applyLoggingAction(false);
+            } catch (RouterOsException $exception) {
+                if (!str_contains(strtolower($exception->getMessage()), 'remote-port')) throw $exception;
+                // RouterOS 7.18+ changed the logging endpoint representation. Some
+                // point releases do not expose enough metadata to detect it first.
+                $applyLoggingAction(true);
+            }
         }
 
         $topics = ['info,!firewall', 'warning', 'error', 'critical'];
@@ -113,7 +134,7 @@ final class JobProcessor
             $prefix = 'WFM' . ($index + 1) . '|';
             $rule = null;
             foreach ($rules as $candidate) if (($candidate['prefix'] ?? '') === $prefix) $rule = $candidate;
-            $values = ['topics' => $topic, 'action' => 'wifimanager-remote', 'prefix' => $prefix, 'disabled' => 'no'];
+            $values = ['topics' => $topic, 'action' => $actionName, 'prefix' => $prefix, 'disabled' => 'no'];
             if ($rule === null) $repository->add('/system/logging', $values);
             else $repository->set('/system/logging', (string) $rule['.id'], $values);
         }
@@ -413,7 +434,7 @@ final class JobProcessor
     /** @param array<string,mixed> $row */
     private static function loggingActionMatches(array $row, string $target, int $port, string $endpoint): bool
     {
-        if (($row['name'] ?? '') !== 'wifimanager-remote') return false;
+        if (!in_array((string) ($row['name'] ?? ''), [self::LOGGING_ACTION_NAME, self::LEGACY_LOGGING_ACTION_NAME], true)) return false;
         $legacyTarget = trim((string) ($row['remote'] ?? ''), '[]');
         if ($legacyTarget !== '') {
             return $legacyTarget === trim($target, '[]') && (int) ($row['remote-port'] ?? 0) === $port;
