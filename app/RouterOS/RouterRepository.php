@@ -33,9 +33,9 @@ final class RouterRepository
         // RouterOS 7.22 can return incomplete Remote CAP records when .proplist is used.
         // This table is small, so reading complete rows is both reliable and inexpensive.
         $snapshot['caps'] = $this->safeRows('/interface/wifi/capsman/remote-cap/print', [], $warnings);
-        $snapshot['radios'] = $this->safeRows('/interface/wifi/radio/print', [
-            '.id', 'cap', 'radio-mac', 'interface', 'bands', 'hw-type', 'max-peers',
-        ], $warnings);
+        // RouterOS 7.22 can also return only internal IDs for this table when
+        // .proplist is used. Complete rows are small enough for the full sync.
+        $snapshot['radios'] = $this->safeRows('/interface/wifi/radio/print', [], $warnings);
         $snapshot['provisioning'] = $this->safeRows('/interface/wifi/provisioning/print', [], $warnings);
         $snapshot['warnings'] = $warnings;
         return $snapshot;

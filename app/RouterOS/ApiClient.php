@@ -141,7 +141,13 @@ final class ApiClient
                 $traps[] = $attributes;
             } elseif ($reply === '!fatal') {
                 throw new RouterOsException($attributes['message'] ?? 'MikroTik ukončil API spojení.');
-            } elseif ($reply === '!done' || $reply === '!empty') {
+            } elseif ($reply === '!empty') {
+                // Since RouterOS 7.18, commands without data can emit !empty,
+                // but the response still ends with a separate !done sentence.
+                // Stopping here leaves !done in the socket and shifts every
+                // subsequent response to the following command.
+                continue;
+            } elseif ($reply === '!done') {
                 $done = $attributes;
                 break;
             }

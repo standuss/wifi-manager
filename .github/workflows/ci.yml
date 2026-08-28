@@ -17,6 +17,9 @@ jobs:
       - name: PHP syntaxe
         run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 
+      - name: RouterOS API odpovědi
+        run: php tests/api_client_reply_test.php
+
       - name: Shell syntaxe
         run: |
           sh -n install.sh
