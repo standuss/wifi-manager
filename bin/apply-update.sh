@@ -104,6 +104,24 @@ do
     install -o root -g root -m 0644 "$WFM_APP_DIR/deploy/$UNIT" "/etc/systemd/system/$(basename "$UNIT")"
 done
 /usr/bin/systemctl daemon-reload
+
+# Debianí balíček nfdump může po instalaci automaticky spustit vlastní
+# nfcapd@default na UDP/2055. Při aktualizaci ze starších verzí jej musíme
+# stejně jako čistý instalátor vypnout, jinak náš omezený kolektor nenastartuje.
+/usr/bin/systemctl disable --now nfdump@default.service nfdump.service >/dev/null 2>&1 || true
+/usr/bin/systemctl reset-failed wifimanager-nfcapd.service >/dev/null 2>&1 || true
+
+# Jednotky i rsyslog konfigurace už mohou existovat ze starší instalace.
+# Restart zajistí jejich načtení a enable --now současně opraví případ, kdy
+# předchozí konflikt nechal některou službu zastavenou.
+/usr/bin/systemctl enable rsyslog.service >/dev/null
+/usr/bin/systemctl restart rsyslog.service
+/usr/bin/systemctl enable --now \
+    wifimanager-nfcapd.service \
+    wifimanager-retention.timer \
+    wifimanager-system-apply.path \
+    wifimanager-update.path
+/usr/bin/systemctl start wifimanager-retention.service
 /usr/sbin/runuser -u www-data -- /usr/bin/php "$WFM_APP_DIR/bin/doctor.php"
 
 ROLLBACK_REQUIRED=0
