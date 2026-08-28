@@ -2,7 +2,7 @@
 Description=WiFi Manager IPFIX collector (nfcapd)
 After=network-online.target
 Wants=network-online.target
-Conflicts=nfdump.service nfdump@default.service
+Conflicts=nfdump.service nfdump@default.service nprobe.service nprobe@none.service
 
 [Service]
 Type=simple

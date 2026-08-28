@@ -61,9 +61,11 @@ rsyslogd -N1
 systemctl daemon-reload
 
 # Balíček nfdump na Debianu automaticky zapíná vlastní nfcapd@default na UDP
-# 2055. WiFi Manager používá stejný program s vlastním úložištěm a omezeným
-# systemd účtem, proto výchozí instanci vypneme dříve, než spustíme naši.
+# 2055. Na dříve používaných logger serverech může stejný port držet také
+# nprobe@none. WiFi Manager používá vlastní nfcapd s odděleným úložištěm,
+# proto známé výchozí kolektory vypneme dříve, než spustíme naši instanci.
 systemctl disable --now nfdump@default.service nfdump.service >/dev/null 2>&1 || true
+systemctl disable --now nprobe@none.service nprobe.service >/dev/null 2>&1 || true
 systemctl reset-failed wifimanager-nfcapd.service >/dev/null 2>&1 || true
 
 # rsyslog mohl být spuštěn už během instalace balíčku. Restart je nutný, aby

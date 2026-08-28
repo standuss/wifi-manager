@@ -101,7 +101,7 @@ Správce projektu změní `VERSION` a odešle změny do větve `main`:
 
 ```bash
 git add .
-git commit -m "Release 0.3.2"
+git commit -m "Release 0.3.3"
 git push origin main
 ```
 
