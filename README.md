@@ -62,6 +62,10 @@ Port `8728` není šifrovaný. Nikdy jej nepovolujte z internetu ani z nedůvěr
 - dlouhodobý syslog/CEF archiv v denních JSONL souborech;
 - příjem a vyhledávání IPFIX pomocí `nfcapd` a `nfdump`;
 - vazba historické IP adresy na zařízení a držitele;
+- automatické nastavení CEF/syslogu a IPFIX přímo na MikroTiku, včetně oddělené NAT adresy a portů;
+- detailní prohlížení toků včetně MAC adres, NAT překladu, rozhraní a souhrnů;
+- SMTP s volitelným ověřením a šifrováním, e-mailová upozornění podle uživatele;
+- šifrované ruční i pravidelné zálohy RouterOS s retencí a stažením z administrace;
 - správa retence a diskových limitů z české administrace;
 - aktualizace na kliknutí s kontrolou původu balíčku, zálohou a návratem při chybě.
 
@@ -73,7 +77,7 @@ Instalátor zapne tyto výchozí porty:
 - UDP `514` – kompatibilní syslog;
 - UDP `2055` – IPFIX z gateway.
 
-Šablona RouterOS je v `deploy/logging/mikrotik-routeros.rsc.example`. Před použitím nahraďte `SERVER_IP` a názvy `WIFI_INTERFACE_1`, `WIFI_INTERFACE_2` skutečnými rozhraními. Na gateway zapněte CEF i IPFIX, na jednotlivých CAPech pouze CEF/syslog. Nezapínejte plošné debug ani firewall logování.
+V **Služby a aktualizace** vyplňte místní naslouchací IP a zvlášť IP adresu, kterou vidí MikroTik. Po uložení aplikace sama vytvoří RouterOS logging action, pravidla pro běžné systémové události a IPFIX target. Pokud je server za NAT, veřejné cílové porty mohou být jiné než místní; ve formuláři jsou proto uvedené odděleně. Na NATu je následně přesměrujte na místní TCP/UDP porty serveru. Plošné firewall a debug logování aplikace nezapíná.
 
 Výchozí retence je 1825 dní, diskový limit 60 GiB pro syslog a 280 GiB pro IPFIX. Hodnoty lze změnit v **Služby a aktualizace**. Při překročení stáří nebo limitu se nejdřív mažou nejstarší archivy.
 
@@ -97,7 +101,7 @@ Správce projektu změní `VERSION` a odešle změny do větve `main`:
 
 ```bash
 git add .
-git commit -m "Release 0.2.7"
+git commit -m "Release 0.3.0"
 git push origin main
 ```
 
@@ -110,6 +114,8 @@ Zálohujte:
 - `/var/www/wifimanager/config/local.php` – aplikační šifrovací klíč;
 - `/var/www/wifimanager/storage/wifimanager.sqlite` – účty, evidence a historie;
 - `/var/lib/wifimanager` – dlouhodobý syslog a IPFIX archiv.
+
+Samotné RouterOS zálohy lze zapnout v **Služby a aktualizace → Zálohy RouterOS**. Soubory jsou šifrované heslem zadaným administrátorem a ukládají se do `/var/lib/wifimanager/backups`.
 
 Bez původního aplikačního klíče nelze obnovit zašifrované přístupové údaje.
 

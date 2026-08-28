@@ -9,6 +9,9 @@ use WifiManager\Services\JobService;
 use WifiManager\Services\RouterFactory;
 use WifiManager\Services\SettingsService;
 use WifiManager\Services\SyncService;
+use WifiManager\Services\SmtpMailer;
+use WifiManager\Services\NotificationService;
+use WifiManager\Services\BackupService;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
 extract($container);
@@ -18,8 +21,10 @@ $settings = new SettingsService($database);
 $routerFactory = new RouterFactory($database, $crypto);
 $jobService = new JobService($database, $crypto);
 $audit = new AuditService($database);
-$processor = new JobProcessor($database, $routerFactory, $settings, $jobService, $audit);
-$sync = new SyncService($database, $routerFactory, $settings, $crypto);
+$notifications = new NotificationService($database, $settings, $crypto, new SmtpMailer());
+$backups = new BackupService($database, $config, $settings, $jobService, $crypto, $notifications);
+$processor = new JobProcessor($database, $routerFactory, $settings, $jobService, $audit, $backups);
+$sync = new SyncService($database, $routerFactory, $settings, $crypto, $notifications);
 
 $once = in_array('--once', $argv, true);
 $fastInterval = max(2, (int) $config->get('sync.fast_interval_seconds', 3));
@@ -38,11 +43,14 @@ do {
     foreach ($routerIds as $routerId) {
         try {
             $sync->sync((int) $routerId, $full);
+            if ($full) $backups->scheduleIfDue((int) $routerId);
             fwrite(STDOUT, sprintf("[%s] Router %d synchronizován%s.\n", date('c'), $routerId, $full ? ' kompletně' : ''));
         } catch (Throwable $exception) {
             fwrite(STDERR, sprintf("[%s] Router %d: %s\n", date('c'), $routerId, $exception->getMessage()));
         }
     }
+    $sent = 0;
+    while ($sent < 5 && $notifications->processOne()) $sent++;
     if ($full) $lastFull = time();
     if ($once) break;
     $elapsed = time() - $cycleStarted;

@@ -19,6 +19,13 @@
     </div>
 </form>
 
+<section class="flow-summary-grid">
+    <article><span>Toky ve výpisu</span><strong><?= number_format((int) ($result['summary']['flows'] ?? 0), 0, ',', ' ') ?></strong></article>
+    <article><span>Přenesená data</span><strong><?= e(format_bytes($result['summary']['bytes'] ?? 0)) ?></strong></article>
+    <article><span>Pakety</span><strong><?= number_format((int) ($result['summary']['packets'] ?? 0), 0, ',', ' ') ?></strong></article>
+    <article><span>Unikátní IP adresy</span><strong><?= number_format((int) ($result['summary']['endpoints'] ?? 0), 0, ',', ' ') ?></strong></article>
+</section>
+
 <section class="panel archive-results"><header class="panel-header"><div><span class="panel-kicker">VÝSLEDKY</span><h2><?= count($result['rows']) ?> síťových toků</h2></div><?php if ($result['truncated']): ?><span class="badge pending"><i></i>výpis zkrácen</span><?php endif; ?></header><div class="table-wrap"><table class="data-table flow-table"><thead><tr><th>Začátek</th><th>Zdroj</th><th></th><th>Cíl</th><th>Protokol</th><th>Objem</th></tr></thead><tbody>
 <?php if ($result['rows'] === []): ?><tr class="empty-row"><td colspan="6"><span><?= icon('flow') ?></span><strong>Žádné odpovídající toky</strong><small>Upravte období nebo filtry.</small></td></tr><?php endif; ?>
 <?php foreach ($result['rows'] as $row): ?>
@@ -26,5 +33,7 @@
 <td><strong class="mono"><?= e($row['source_ip']) ?><?= $row['source_port'] ? ':'.(int)$row['source_port'] : '' ?></strong><?php if ($row['source_identity']): ?><small class="subline"><?= e($row['source_identity']['name']) ?><?= $row['source_identity']['person'] ? ' · '.e($row['source_identity']['person']) : '' ?></small><?php elseif ($row['source_mac']): ?><small class="subline mono"><?= e($row['source_mac']) ?></small><?php endif; ?></td>
 <td class="flow-arrow"><?= icon('arrow-right') ?></td>
 <td><strong class="mono"><?= e($row['destination_ip']) ?><?= $row['destination_port'] ? ':'.(int)$row['destination_port'] : '' ?></strong><?php if ($row['destination_identity']): ?><small class="subline"><?= e($row['destination_identity']['name']) ?><?= $row['destination_identity']['person'] ? ' · '.e($row['destination_identity']['person']) : '' ?></small><?php elseif ($row['destination_mac']): ?><small class="subline mono"><?= e($row['destination_mac']) ?></small><?php endif; ?></td>
-<td><span class="protocol-pill"><?= e($row['protocol'] ?: '—') ?></span></td><td><strong><?= e(format_bytes($row['bytes'])) ?></strong><small class="subline"><?= number_format((int)$row['packets'], 0, ',', ' ') ?> paketů</small></td></tr>
+<td><span class="protocol-pill"><?= e($row['protocol'] ?: '—') ?></span><small class="subline">if <?= e((string) ($row['input_interface'] ?? '—')) ?> → <?= e((string) ($row['output_interface'] ?? '—')) ?></small></td>
+<td><strong><?= e(format_bytes($row['bytes'])) ?></strong><small class="subline"><?= number_format((int)$row['packets'], 0, ',', ' ') ?> paketů</small>
+<details class="flow-details"><summary>Podrobnosti</summary><div><span>Zdrojová MAC</span><code><?= e($row['source_mac'] ?: '—') ?></code><span>Cílová MAC</span><code><?= e($row['destination_mac'] ?: '—') ?></code><span>NAT zdroj</span><code><?= e($row['nat_source_ip'] ?: '—') ?><?= $row['nat_source_port'] ? ':' . (int) $row['nat_source_port'] : '' ?></code><span>NAT cíl</span><code><?= e($row['nat_destination_ip'] ?: '—') ?><?= $row['nat_destination_port'] ? ':' . (int) $row['nat_destination_port'] : '' ?></code></div></details></td></tr>
 <?php endforeach; ?></tbody></table></div></section>

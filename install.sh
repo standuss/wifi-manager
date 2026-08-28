@@ -33,6 +33,7 @@ php -r 'if (filter_var($argv[1], FILTER_VALIDATE_IP) === false) { fwrite(STDERR,
 
 echo "[2/7] Kopíruji WiFi Manager…"
 install -d -o root -g www-data -m 2770 "$APP_DIR" "$APP_DIR/config" "$APP_DIR/storage"
+install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/backups
 if [ "$SOURCE_DIR" != "$APP_DIR" ]; then
     rsync -a --delete \
         --exclude .git/ --exclude dist/ --exclude config/local.php --exclude storage/ \

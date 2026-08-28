@@ -91,6 +91,33 @@ final class RouterRepository
         return $this->client->command(rtrim($menu, '/') . '/' . trim($action, '/'), $attributes)['done'];
     }
 
+    /** @param array<string,scalar|null> $attributes */
+    public function setSingleton(string $menu, array $attributes): void
+    {
+        $this->client->command(rtrim($menu, '/') . '/set', $attributes);
+    }
+
+    public function readFileChunk(string $file, int $offset, int $chunkSize): string
+    {
+        $response = $this->client->command('/file/read', [
+            'file' => $file,
+            'offset' => $offset,
+            'chunk-size' => $chunkSize,
+        ]);
+        $row = $response['rows'][0] ?? $response['done'];
+        return (string) ($row['data'] ?? '');
+    }
+
+    public function removeFile(string $file): void
+    {
+        foreach ($this->rows('/file/print') as $row) {
+            if (($row['name'] ?? '') === $file && isset($row['.id'])) {
+                $this->remove('/file', (string) $row['.id']);
+                return;
+            }
+        }
+    }
+
     /** @return array<string,string> */
     private function first(string $command, array $properties): array
     {

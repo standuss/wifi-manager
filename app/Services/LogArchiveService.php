@@ -108,7 +108,7 @@ final class LogArchiveService
 
     /**
      * @param array{from?:string,to?:string,ip?:string,port?:string|int,protocol?:string,limit?:int} $filters
-     * @return array{rows:list<array<string,mixed>>,from:DateTimeImmutable,to:DateTimeImmutable,truncated:bool}
+     * @return array{rows:list<array<string,mixed>>,from:DateTimeImmutable,to:DateTimeImmutable,truncated:bool,summary:array<string,int>}
      */
     public function searchFlows(array $filters): array
     {
@@ -166,7 +166,17 @@ final class LogArchiveService
         usort($rows, static fn (array $a, array $b): int => strcmp((string) $b['first_at'], (string) $a['first_at']));
         $truncated = count($rows) > $limit;
         if ($truncated) $rows = array_slice($rows, 0, $limit);
-        return compact('rows', 'from', 'to', 'truncated');
+        $endpoints = [];
+        $bytes = 0;
+        $packets = 0;
+        foreach ($rows as $row) {
+            $bytes += (int) $row['bytes'];
+            $packets += (int) $row['packets'];
+            if ($row['source_ip'] !== '') $endpoints[$row['source_ip']] = true;
+            if ($row['destination_ip'] !== '') $endpoints[$row['destination_ip']] = true;
+        }
+        $summary = ['flows' => count($rows), 'bytes' => $bytes, 'packets' => $packets, 'endpoints' => count($endpoints)];
+        return compact('rows', 'from', 'to', 'truncated', 'summary');
     }
 
     /** @param array<string,mixed> $filters @return array{DateTimeImmutable,DateTimeImmutable} */
@@ -226,10 +236,6 @@ final class LogArchiveService
     /** @param array<string,mixed> $item @return array<string,mixed> */
     private function normalizeSyslog(array $item): array
     {
-        $protocol = (string) ($item['proto'] ?? $item['protocol'] ?? '');
-        $protocol = [
-            '1' => 'ICMP', '6' => 'TCP', '17' => 'UDP', '47' => 'GRE', '50' => 'ESP', '58' => 'ICMP6',
-        ][$protocol] ?? strtoupper($protocol);
         return [
             'timestamp' => $item['timegenerated'] ?? $item['timereported'] ?? $item['timestamp'] ?? null,
             'hostname' => (string) ($item['hostname'] ?? ''),
@@ -247,6 +253,10 @@ final class LogArchiveService
     {
         $sourceIp = (string) ($item['src4_addr'] ?? $item['src6_addr'] ?? $item['src_addr'] ?? '');
         $destinationIp = (string) ($item['dst4_addr'] ?? $item['dst6_addr'] ?? $item['dst_addr'] ?? '');
+        $protocolValue = (string) ($item['proto'] ?? $item['protocol'] ?? $item['protocolIdentifier'] ?? '');
+        $protocol = [
+            '1' => 'ICMP', '6' => 'TCP', '17' => 'UDP', '47' => 'GRE', '50' => 'ESP', '58' => 'ICMP6',
+        ][$protocolValue] ?? strtoupper($protocolValue);
         return [
             'first_at' => $item['t_first'] ?? $item['first'] ?? $item['first_at'] ?? null,
             'last_at' => $item['t_last'] ?? $item['last'] ?? $item['last_at'] ?? null,
@@ -263,6 +273,8 @@ final class LogArchiveService
             'output_interface' => $item['output_snmp'] ?? $item['out_if'] ?? null,
             'nat_source_ip' => self::firstValue($item, ['src4_xlt_ip', 'src6_xlt_ip', 'xlate_src_ip', 'postNATSourceIPv4Address']),
             'nat_destination_ip' => self::firstValue($item, ['dst4_xlt_ip', 'dst6_xlt_ip', 'xlate_dst_ip', 'postNATDestinationIPv4Address']),
+            'nat_source_port' => (int) self::firstValue($item, ['src_xlt_port', 'xlate_src_port', 'postNAPTSourceTransportPort']),
+            'nat_destination_port' => (int) self::firstValue($item, ['dst_xlt_port', 'xlate_dst_port', 'postNAPTDestinationTransportPort']),
         ];
     }
 

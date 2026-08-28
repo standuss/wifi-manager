@@ -20,6 +20,9 @@ use WifiManager\Services\RouterFactory;
 use WifiManager\Services\SettingsService;
 use WifiManager\Services\SystemService;
 use WifiManager\Services\GitHubReleaseService;
+use WifiManager\Services\SmtpMailer;
+use WifiManager\Services\NotificationService;
+use WifiManager\Services\BackupService;
 
 if (is_file(dirname(__DIR__) . '/storage/update-in-progress')) {
     http_response_code(503);
@@ -36,7 +39,10 @@ $settingsService = new SettingsService($database);
 $jobs = new JobService($database, $crypto);
 $routerFactory = new RouterFactory($database, $crypto);
 $logArchive = new LogArchiveService($database, $config);
-$systemService = new SystemService($settingsService, $config);
+$smtpMailer = new SmtpMailer();
+$notifications = new NotificationService($database, $settingsService, $crypto, $smtpMailer);
+$backups = new BackupService($database, $config, $settingsService, $jobs, $crypto, $notifications);
+$systemService = new SystemService($settingsService, $config, $database, $jobs, $crypto, $smtpMailer);
 $githubReleases = new GitHubReleaseService($config);
 
 $controllers = [
@@ -50,7 +56,7 @@ $controllers = [
     'users' => new UsersController($database, $auth, $view, $audit),
     'audit' => new AuditController($database, $auth, $view),
     'settings' => new SettingsController($database, $auth, $view, $settingsService, $crypto, $routerFactory, $audit),
-    'system' => new SystemController($auth, $config, $view, $settingsService, $systemService, $logArchive, $githubReleases, $audit),
+    'system' => new SystemController($database, $auth, $config, $view, $settingsService, $systemService, $logArchive, $githubReleases, $audit, $backups),
 ];
 
 $base = rtrim((string) $config->get('app.base_path', ''), '/');
@@ -79,11 +85,17 @@ $routes = [
     'GET /users' => ['users', 'index'],
     'POST /users' => ['users', 'store'],
     'POST /users/toggle' => ['users', 'toggle'],
+    'POST /users/update' => ['users', 'update'],
     'GET /audit' => ['audit', 'index'],
     'GET /settings' => ['settings', 'index'],
     'POST /settings' => ['settings', 'save'],
     'GET /system' => ['system', 'index'],
     'POST /system/monitoring' => ['system', 'saveMonitoring'],
+    'POST /system/smtp' => ['system', 'saveSmtp'],
+    'POST /system/smtp-test' => ['system', 'testSmtp'],
+    'POST /system/backup-settings' => ['system', 'saveBackup'],
+    'POST /system/backup-now' => ['system', 'backupNow'],
+    'GET /system/backup-download' => ['system', 'downloadBackup'],
     'POST /system/update-install' => ['system', 'installUpdate'],
 ];
 

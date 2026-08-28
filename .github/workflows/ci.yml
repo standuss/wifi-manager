@@ -18,7 +18,10 @@ jobs:
         run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: RouterOS API odpovědi
-        run: php tests/api_client_reply_test.php
+        run: |
+          php tests/api_client_reply_test.php
+          php tests/log_archive_flow_test.php
+          php tests/schema_migration_test.php
 
       - name: Shell syntaxe
         run: |

@@ -15,6 +15,7 @@ final class JobProcessor
         private readonly SettingsService $settingsService,
         private readonly JobService $jobs,
         private readonly AuditService $audit,
+        private readonly BackupService $backups,
     ) {
     }
 
@@ -29,6 +30,8 @@ final class JobProcessor
                 'register_device' => $this->registerDevice($jobId, $repository, $job['payload']),
                 'toggle_network' => $this->toggleNetwork($jobId, $repository, $job['payload']),
                 'create_network' => $this->createNetwork($jobId, $repository, $job['payload']),
+                'configure_monitoring' => $this->configureMonitoring($jobId, $repository, $job['payload']),
+                'backup_router' => $this->backups->run($jobId, $repository, $job['payload']),
                 default => throw new \RuntimeException('Neznámý typ synchronizační úlohy.'),
             };
             $this->jobs->done($jobId);
@@ -52,6 +55,91 @@ final class JobProcessor
             );
         }
         return true;
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function configureMonitoring(int $jobId, RouterRepository $repository, array $payload): void
+    {
+        $target = (string) $payload['target_address'];
+        $syslogPort = (int) $payload['syslog_port'];
+        $flowPort = (int) $payload['netflow_port'];
+        $transport = (string) $payload['syslog_transport'];
+        $routerId = (int) ($payload['router_id'] ?? 0);
+        $remoteEndpoint = str_contains($target, ':') ? '[' . $target . ']:' . $syslogPort : $target . ':' . $syslogPort;
+
+        $this->jobs->progress($jobId, 'Nastavuji vzdálený syslog na MikroTiku');
+        $actions = $repository->rows('/system/logging/action/print');
+        $action = null;
+        foreach ($actions as $row) if (($row['name'] ?? '') === 'wifimanager-remote') $action = $row;
+        $attributes = [
+            'target' => 'remote',
+            'remote-port' => $remoteEndpoint,
+            'remote-protocol' => $transport,
+            'remote-log-format' => $transport === 'tcp' ? 'cef' : 'syslog',
+            'syslog-time-format' => 'iso8601',
+        ];
+        if ($action === null) {
+            $repository->add('/system/logging/action', ['name' => 'wifimanager-remote'] + $attributes);
+        } else {
+            $repository->set('/system/logging/action', (string) $action['.id'], $attributes);
+        }
+
+        $topics = ['info,!firewall', 'warning', 'error', 'critical'];
+        $rules = $repository->rows('/system/logging/print');
+        foreach ($topics as $index => $topic) {
+            $prefix = 'WFM' . ($index + 1) . '|';
+            $rule = null;
+            foreach ($rules as $candidate) if (($candidate['prefix'] ?? '') === $prefix) $rule = $candidate;
+            $values = ['topics' => $topic, 'action' => 'wifimanager-remote', 'prefix' => $prefix, 'disabled' => 'no'];
+            if ($rule === null) $repository->add('/system/logging', $values);
+            else $repository->set('/system/logging', (string) $rule['.id'], $values);
+        }
+
+        $this->jobs->progress($jobId, 'Nastavuji export IPFIX na MikroTiku');
+        $repository->setSingleton('/ip/traffic-flow', [
+            'enabled' => 'yes', 'interfaces' => 'all', 'active-flow-timeout' => '5m', 'inactive-flow-timeout' => '15s',
+        ]);
+        $repository->setSingleton('/ip/traffic-flow/ipfix', [
+            'src-mac-address' => 'yes',
+            'dst-mac-address' => 'yes',
+            'nat-src-address' => 'yes',
+            'nat-dst-address' => 'yes',
+            'nat-src-port' => 'yes',
+            'nat-dst-port' => 'yes',
+            'in-interface' => 'yes',
+            'out-interface' => 'yes',
+        ]);
+        $targets = $repository->rows('/ip/traffic-flow/target/print');
+        $flowTarget = null;
+        $storedTargetId = (string) ($this->settingsService->all()['monitor_router_flow_target_id_' . $routerId] ?? '');
+        foreach ($targets as $candidate) {
+            if (($storedTargetId !== '' && ($candidate['.id'] ?? '') === $storedTargetId)
+                || (($candidate['dst-address'] ?? '') === $target && (int) ($candidate['port'] ?? 0) === $flowPort)) {
+                $flowTarget = $candidate;
+                break;
+            }
+        }
+        $flowValues = ['dst-address' => $target, 'port' => $flowPort, 'version' => 'IPFIX'];
+        if ($flowTarget === null) {
+            $done = $repository->add('/ip/traffic-flow/target', $flowValues);
+            if (($done['ret'] ?? '') !== '') $storedTargetId = (string) $done['ret'];
+        } else {
+            $storedTargetId = (string) $flowTarget['.id'];
+            $repository->set('/ip/traffic-flow/target', $storedTargetId, $flowValues);
+        }
+        if ($routerId > 0 && $storedTargetId !== '') {
+            $this->settingsService->save(['monitor_router_flow_target_id_' . $routerId => $storedTargetId]);
+        }
+
+        $verifyAction = false;
+        foreach ($repository->rows('/system/logging/action/print') as $row) {
+            if (($row['name'] ?? '') === 'wifimanager-remote' && ($row['remote-port'] ?? '') === $remoteEndpoint) $verifyAction = true;
+        }
+        $verifyFlow = false;
+        foreach ($repository->rows('/ip/traffic-flow/target/print') as $row) {
+            if (($row['dst-address'] ?? '') === $target && (int) ($row['port'] ?? 0) === $flowPort) $verifyFlow = true;
+        }
+        if (!$verifyAction || !$verifyFlow) throw new \RuntimeException('MikroTik nepotvrdil nastavení syslogu nebo IPFIX.');
     }
 
     /** @param array<string,mixed> $payload */

@@ -32,7 +32,7 @@ echo "\nVolitelné monitorovací služby\n";
 foreach (['/usr/bin/nfdump' => 'nfdump', '/usr/sbin/rsyslogd' => 'rsyslog', '/usr/bin/gh' => 'GitHub CLI'] as $binary => $label) {
     printf("%-15s %s\n", $label, is_executable($binary) ? 'OK' : 'nenainstalováno');
 }
-foreach (['/var/lib/wifimanager/syslog' => 'syslog archiv', '/var/lib/wifimanager/netflow' => 'IPFIX archiv'] as $directory => $label) {
+foreach (['/var/lib/wifimanager/syslog' => 'syslog archiv', '/var/lib/wifimanager/netflow' => 'IPFIX archiv', '/var/lib/wifimanager/backups' => 'zálohy RouterOS'] as $directory => $label) {
     printf("%-15s %s\n", $label, is_dir($directory) && is_readable($directory) ? 'OK' : 'nenainstalováno');
 }
 exit($ok ? 0 : 1);

@@ -26,6 +26,8 @@ jobs:
           sh -n bin/install-monitoring.sh
           sh -n bin/apply-update.sh
           php tests/api_client_reply_test.php
+          php tests/log_archive_flow_test.php
+          php tests/schema_migration_test.php
 
       - name: Sestavit release ZIP
         run: |

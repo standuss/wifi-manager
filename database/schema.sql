@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO schema_meta (key, value) VALUES ('version', '3')
+INSERT INTO schema_meta (key, value) VALUES ('version', '4')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS admin_users (
     username TEXT NOT NULL,
     username_normalized TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    email TEXT,
+    notify_new_device INTEGER NOT NULL DEFAULT 0,
+    notify_backup_result INTEGER NOT NULL DEFAULT 0,
+    notify_monitoring_problem INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
     active INTEGER NOT NULL DEFAULT 1,
@@ -83,6 +87,24 @@ INSERT INTO app_settings (key, value) VALUES
     ('monitor_retention_days', '1825'),
     ('monitor_syslog_max_gib', '60'),
     ('monitor_netflow_max_gib', '280'),
+    ('monitor_router_target_address', ''),
+    ('monitor_router_syslog_port', '5514'),
+    ('monitor_router_syslog_transport', 'tcp'),
+    ('monitor_router_netflow_port', '2055'),
+    ('smtp_enabled', '0'),
+    ('smtp_host', ''),
+    ('smtp_port', '587'),
+    ('smtp_encryption', 'starttls'),
+    ('smtp_auth_enabled', '1'),
+    ('smtp_username', ''),
+    ('smtp_password_cipher', ''),
+    ('smtp_from_email', ''),
+    ('smtp_from_name', 'WiFi Manager'),
+    ('smtp_timeout_seconds', '10'),
+    ('backup_enabled', '0'),
+    ('backup_interval_days', '7'),
+    ('backup_retention_count', '12'),
+    ('backup_password_cipher', ''),
     ('update_github_repository', 'standuss/wifi-manager'),
     ('update_channel', 'stable'),
     ('update_auto_check', '1')
@@ -212,6 +234,51 @@ CREATE TABLE IF NOT EXISTS connected_clients (
 );
 CREATE INDEX IF NOT EXISTS idx_connected_clients_status ON connected_clients(registration_status, ssid);
 CREATE INDEX IF NOT EXISTS idx_connected_clients_ip ON connected_clients(ip_address);
+
+CREATE TABLE IF NOT EXISTS discovered_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+    mac_address TEXT NOT NULL,
+    hostname TEXT,
+    ip_address TEXT,
+    ssid TEXT,
+    first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(router_id, mac_address)
+);
+CREATE INDEX IF NOT EXISTS idx_discovered_devices_seen ON discovered_devices(last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    UNIQUE(user_id, type, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_queue_pending ON notification_queue(status, next_attempt_at, created_at);
+
+CREATE TABLE IF NOT EXISTS router_backups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    local_path TEXT,
+    size_bytes INTEGER,
+    routeros_version TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
+    error TEXT,
+    created_by INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_router_backups_router_created ON router_backups(router_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS dhcp_leases_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

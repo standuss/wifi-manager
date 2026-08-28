@@ -26,6 +26,7 @@ fi
 install -d -o root -g www-data -m 2750 /var/lib/wifimanager
 install -d -o root -g www-data -m 2750 /var/lib/wifimanager/syslog
 install -d -o wifimanager-log -g www-data -m 2750 /var/lib/wifimanager/netflow
+install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/backups
 install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/service-requests
 install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/update-requests
 install -d -o root -g www-data -m 2750 /var/lib/wifimanager/gh
@@ -87,4 +88,4 @@ if [ -z "$(ss -H -lnu "sport = :$NETFLOW_PORT")" ]; then
 fi
 
 echo "Monitoring je připravený na $LISTEN_ADDRESS: TCP/$SYSLOG_TCP_PORT, UDP/$SYSLOG_UDP_PORT a IPFIX/$NETFLOW_PORT."
-echo "RouterOS šablona: $APP_DIR/deploy/logging/mikrotik-routeros.rsc.example"
+echo "RouterOS lze nyní nastavit přímo v aplikaci na stránce Služby a aktualizace."

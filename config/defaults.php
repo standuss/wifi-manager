@@ -34,6 +34,10 @@ return [
         'query_timeout_seconds' => 20,
         'max_output_bytes' => 8388608,
     ],
+    'backup' => [
+        'directory' => '/var/lib/wifimanager/backups',
+        'chunk_size' => 32768,
+    ],
     'update' => [
         'repository' => 'standuss/wifi-manager',
         'channel' => 'stable',

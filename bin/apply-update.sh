@@ -110,9 +110,13 @@ FAILURE_MESSAGE="Instalace release $VERSION selhala; obnovuji předchozí verzi.
 /usr/bin/rsync -a --delete --exclude=config/local.php --exclude=storage/ "$WORK/extract/wifi-manager/" "$WFM_APP_DIR/"
 chown -R root:www-data "$WFM_APP_DIR"
 chmod 2770 "$WFM_APP_DIR/storage" "$WFM_APP_DIR/config"
+install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/backups
 chmod 0750 "$WFM_APP_DIR/bin/"*.php "$WFM_APP_DIR/bin/"*.sh
 install -o root -g root -m 0755 "$WFM_APP_DIR/bin/apply-system-settings.php" /usr/local/lib/wifimanager/apply-system-settings.php
 install -o root -g root -m 0755 "$WFM_APP_DIR/bin/apply-update.sh" /usr/local/lib/wifimanager/apply-update.sh
+if [ ! -f /etc/wifimanager/update.conf ]; then
+    install -o root -g root -m 0640 "$WFM_APP_DIR/deploy/update/wifimanager-update.conf" /etc/wifimanager/update.conf
+fi
 for UNIT in \
     wifimanager-worker.service \
     logging/wifimanager-nfcapd.service \
@@ -152,7 +156,7 @@ if ! /usr/bin/systemctl start wifimanager-doctor.service; then
 fi
 
 ROLLBACK_REQUIRED=0
-rm -f "$MAINTENANCE" "$REQUEST"
+rm -f "$MAINTENANCE" "$REQUEST" /var/lib/wifimanager/system-apply-status.json
 /usr/bin/systemctl restart wifimanager-worker.service
 write_status done "Aktualizace $VERSION byla úspěšně nainstalována." "$VERSION"
 trap - EXIT INT TERM

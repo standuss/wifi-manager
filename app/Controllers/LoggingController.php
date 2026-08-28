@@ -49,7 +49,7 @@ final class LoggingController
             'protocol' => trim((string) ($_GET['protocol'] ?? '')),
         ];
         $status = $this->archive->status();
-        $result = ['rows' => [], 'truncated' => false];
+        $result = ['rows' => [], 'truncated' => false, 'summary' => ['flows' => 0, 'bytes' => 0, 'packets' => 0, 'endpoints' => 0]];
         $error = null;
         if ($status['netflow']['readable'] && $status['netflow']['nfdump']) {
             try {

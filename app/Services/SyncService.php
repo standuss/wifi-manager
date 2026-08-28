@@ -15,11 +15,15 @@ final class SyncService
         private readonly RouterFactory $routerFactory,
         private readonly SettingsService $settingsService,
         private readonly Crypto $crypto,
+        private readonly NotificationService $notifications,
     ) {
     }
 
     public function sync(int $routerId, bool $full = false): void
     {
+        $statusStatement = $this->database->pdo()->prepare('SELECT status FROM routers WHERE id=:id');
+        $statusStatement->execute(['id' => $routerId]);
+        $previousStatus = (string) ($statusStatement->fetchColumn() ?: 'unconfigured');
         $repository = $this->routerFactory->repository($routerId);
         try {
             $snapshot = $full ? $repository->fullSnapshot() : $repository->fastSnapshot();
@@ -62,6 +66,7 @@ final class SyncService
                 "UPDATE routers SET status = 'offline', last_error = :error, updated_at = CURRENT_TIMESTAMP WHERE id = :id"
             );
             $statement->execute(['error' => mb_substr($exception->getMessage(), 0, 1000), 'id' => $routerId]);
+            if ($previousStatus === 'online') $this->notifications->queueMonitoringProblem($routerId, $exception->getMessage());
             throw $exception;
         }
     }
@@ -344,6 +349,15 @@ final class SyncService
             $interface = (string) ($client['interface'] ?? '');
             $accessPoint = $radiosByInterface[$interface] ?? ($interface !== '' ? $interface : null);
             $firstSeen = $previous[$mac]['first_seen_at'] ?? $now;
+            $this->notifications->observeDevice(
+                $pdo,
+                $routerId,
+                $mac,
+                isset($lease['host-name']) ? (string) $lease['host-name'] : null,
+                $ip !== null ? (string) $ip : null,
+                $ssid !== '' ? $ssid : null,
+                $now,
+            );
             $upsert->execute([
                 'router_id' => $routerId,
                 'device_id' => $device['id'] ?? null,
