@@ -52,6 +52,7 @@ install -o root -g root -m 0644 "$APP_DIR/deploy/logging/wifimanager-system-appl
 install -o root -g root -m 0644 "$APP_DIR/deploy/logging/wifimanager-system-apply.path" /etc/systemd/system/wifimanager-system-apply.path
 install -o root -g root -m 0755 "$APP_DIR/bin/apply-update.sh" /usr/local/lib/wifimanager/apply-update.sh
 install -o root -g root -m 0640 "$APP_DIR/deploy/update/wifimanager-update.conf" /etc/wifimanager/update.conf
+install -o root -g root -m 0644 "$APP_DIR/deploy/update/wifimanager-doctor.service" /etc/systemd/system/wifimanager-doctor.service
 install -o root -g root -m 0644 "$APP_DIR/deploy/update/wifimanager-update.service" /etc/systemd/system/wifimanager-update.service
 install -o root -g root -m 0644 "$APP_DIR/deploy/update/wifimanager-update.path" /etc/systemd/system/wifimanager-update.path
 

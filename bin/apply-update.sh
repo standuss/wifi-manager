@@ -120,6 +120,7 @@ for UNIT in \
     logging/wifimanager-retention.timer \
     logging/wifimanager-system-apply.service \
     logging/wifimanager-system-apply.path \
+    update/wifimanager-doctor.service \
     update/wifimanager-update.service \
     update/wifimanager-update.path
 do
@@ -145,8 +146,10 @@ done
     wifimanager-update.path
 /usr/bin/systemctl start wifimanager-retention.service
 FAILURE_MESSAGE="Kontrola aplikace po instalaci release $VERSION selhala; obnovuji předchozí verzi."
-/usr/bin/setpriv --reuid=www-data --regid=www-data --init-groups \
-    /usr/bin/php "$WFM_APP_DIR/bin/doctor.php"
+if ! /usr/bin/systemctl start wifimanager-doctor.service; then
+    /usr/bin/journalctl -u wifimanager-doctor.service -n 50 --no-pager >&2 || true
+    exit 1
+fi
 
 ROLLBACK_REQUIRED=0
 rm -f "$MAINTENANCE" "$REQUEST"

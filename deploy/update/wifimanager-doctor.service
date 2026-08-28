@@ -1,0 +1,18 @@
+[Unit]
+Description=Validate WiFi Manager as the web service user
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/wifimanager
+ExecStart=/usr/bin/php /var/www/wifimanager/bin/doctor.php
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/wifimanager/storage
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
