@@ -144,7 +144,9 @@ done
     wifimanager-system-apply.path \
     wifimanager-update.path
 /usr/bin/systemctl start wifimanager-retention.service
-/usr/sbin/runuser -u www-data -- /usr/bin/php "$WFM_APP_DIR/bin/doctor.php"
+FAILURE_MESSAGE="Kontrola aplikace po instalaci release $VERSION selhala; obnovuji předchozí verzi."
+/usr/bin/setpriv --reuid=www-data --regid=www-data --init-groups \
+    /usr/bin/php "$WFM_APP_DIR/bin/doctor.php"
 
 ROLLBACK_REQUIRED=0
 rm -f "$MAINTENANCE" "$REQUEST"

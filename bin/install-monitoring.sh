@@ -15,7 +15,7 @@ fi
 php -r 'if (filter_var($argv[1], FILTER_VALIDATE_IP) === false) { fwrite(STDERR, "Neplatná IP adresa.\n"); exit(1); }' "$LISTEN_ADDRESS"
 
 apt-get update
-apt-get install -y --no-install-recommends rsyslog nfdump php-cli curl ca-certificates unzip rsync sqlite3 iproute2
+apt-get install -y --no-install-recommends rsyslog nfdump php-cli curl ca-certificates unzip rsync sqlite3 iproute2 util-linux
 "$APP_DIR/bin/install-github-cli.sh"
 
 getent group www-data >/dev/null
@@ -29,6 +29,7 @@ install -d -o wifimanager-log -g www-data -m 2750 /var/lib/wifimanager/netflow
 install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/service-requests
 install -d -o www-data -g www-data -m 2770 /var/lib/wifimanager/update-requests
 install -d -o root -g www-data -m 2750 /var/lib/wifimanager/gh
+install -d -o root -g www-data -m 0750 /var/lib/wifimanager/gh-cache
 install -d -o root -g root -m 0755 /usr/local/lib/wifimanager /etc/wifimanager
 
 install -o root -g root -m 0644 "$APP_DIR/deploy/logging/wifimanager-monitoring.env" /etc/default/wifimanager-monitoring

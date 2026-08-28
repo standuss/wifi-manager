@@ -19,7 +19,7 @@ echo "[1/7] Instaluji systémové balíčky…"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     apache2 libapache2-mod-php php-cli php-sqlite3 php-mbstring php-curl \
-    ca-certificates curl rsync unzip sqlite3 rsyslog nfdump iproute2
+    ca-certificates curl rsync unzip sqlite3 rsyslog nfdump iproute2 util-linux
 
 LISTEN_ADDRESS=${WFM_LISTEN_ADDRESS:-}
 if [ -z "$LISTEN_ADDRESS" ]; then

@@ -9,6 +9,7 @@ ExecStart=/usr/local/lib/wifimanager/apply-update.sh
 User=root
 Group=root
 Environment=GH_CONFIG_DIR=/var/lib/wifimanager/gh
+Environment=XDG_CACHE_HOME=/var/lib/wifimanager/gh-cache
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
