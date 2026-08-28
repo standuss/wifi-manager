@@ -26,6 +26,26 @@ if ($modern !== true || $legacy !== true || $oldName !== true) {
     throw new RuntimeException('Kompatibilita endpointu vzdáleného logování selhala.');
 }
 
+$flowMatch = new ReflectionMethod(JobProcessor::class, 'flowTargetMatches');
+$flowLowercase = $flowMatch->invoke(null, [
+    'dst-address' => '192.0.2.10',
+    'port' => '2055',
+    'version' => 'ipfix',
+], '192.0.2.10', 2055);
+$flowUppercase = $flowMatch->invoke(null, [
+    'dst-address' => '192.0.2.10',
+    'port' => '2055',
+    'version' => 'IPFIX',
+], '192.0.2.10', 2055);
+$flowV9 = $flowMatch->invoke(null, [
+    'dst-address' => '192.0.2.10',
+    'port' => '2055',
+    'version' => '9',
+], '192.0.2.10', 2055);
+if ($flowLowercase !== true || $flowUppercase !== true || $flowV9 !== false) {
+    throw new RuntimeException('Kontrola IPFIX targetu selhala.');
+}
+
 $findQueue = new ReflectionMethod(JobProcessor::class, 'findQueueForDevice');
 $queue = $findQueue->invoke(null, [
     ['.id' => '*1', 'target' => '192.0.2.20/32', 'comment' => 'AA:BB:CC:DD:EE:FF'],

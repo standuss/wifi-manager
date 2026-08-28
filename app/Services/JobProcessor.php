@@ -163,7 +163,7 @@ final class JobProcessor
                 break;
             }
         }
-        $flowValues = ['dst-address' => $target, 'port' => $flowPort, 'version' => 'IPFIX'];
+        $flowValues = ['dst-address' => $target, 'port' => $flowPort, 'version' => 'ipfix'];
         if ($flowTarget === null) {
             $done = $repository->add('/ip/traffic-flow/target', $flowValues);
             if (($done['ret'] ?? '') !== '') $storedTargetId = (string) $done['ret'];
@@ -181,7 +181,7 @@ final class JobProcessor
         }
         $verifyFlow = false;
         foreach ($repository->rows('/ip/traffic-flow/target/print') as $row) {
-            if (($row['dst-address'] ?? '') === $target && (int) ($row['port'] ?? 0) === $flowPort) $verifyFlow = true;
+            if (self::flowTargetMatches($row, $target, $flowPort)) $verifyFlow = true;
         }
         if (!$verifyAction || !$verifyFlow) throw new \RuntimeException('MikroTik nepotvrdil nastavení syslogu nebo IPFIX.');
     }
@@ -440,6 +440,14 @@ final class JobProcessor
             return $legacyTarget === trim($target, '[]') && (int) ($row['remote-port'] ?? 0) === $port;
         }
         return (string) ($row['remote-port'] ?? '') === $endpoint;
+    }
+
+    /** @param array<string,mixed> $row */
+    private static function flowTargetMatches(array $row, string $target, int $port): bool
+    {
+        return (string) ($row['dst-address'] ?? '') === $target
+            && (int) ($row['port'] ?? 0) === $port
+            && strtolower((string) ($row['version'] ?? '')) === 'ipfix';
     }
 
     private function resolvePersonForDevice(int $deviceId, ?int $currentPersonId, string $name, string $note): int
