@@ -1,0 +1,25 @@
+# WiFi Manager – šablona pro RouterOS 7. Před použitím nahraďte SERVER_IP.
+# TCP/CEF je preferovaný pro centrální router. Starší CAP může použít UDP port 514.
+
+/system logging action
+add name=wifimanager-cef target=remote remote-port=SERVER_IP:5514 remote-protocol=tcp remote-log-format=cef cef-event-delimiter="\r\n"
+
+/system logging
+add action=wifimanager-cef topics=critical
+add action=wifimanager-cef topics=error
+add action=wifimanager-cef topics=warning
+add action=wifimanager-cef topics=account
+add action=wifimanager-cef topics=system,info
+add action=wifimanager-cef topics=interface,info
+add action=wifimanager-cef topics=caps,info
+add action=wifimanager-cef topics=wireless,info
+add action=wifimanager-cef topics=dhcp,info
+
+# Nezapínejte plošné firewall,debug logování – rychle zaplní archiv.
+# IPFIX odesílá pouze centrální gateway; CAPy odesílají jen syslog.
+/ip traffic-flow
+set enabled=yes interfaces=WIFI_INTERFACE_1,WIFI_INTERFACE_2 cache-entries=128k active-flow-timeout=1m inactive-flow-timeout=15s packet-sampling=no
+/ip traffic-flow target
+add dst-address=SERVER_IP port=2055 version=ipfix v9-template-refresh=20 v9-template-timeout=1m src-address=0.0.0.0
+/ip traffic-flow ipfix
+set bytes=yes packets=yes protocol=yes src-address=yes dst-address=yes src-port=yes dst-port=yes src-mac-address=yes dst-mac-address=yes first-forwarded=yes last-forwarded=yes in-interface=yes out-interface=yes nat-src-address=yes nat-dst-address=yes nat-src-port=yes nat-dst-port=yes tcp-flags=yes

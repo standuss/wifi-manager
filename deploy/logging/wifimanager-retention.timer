@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily WiFi Manager archive retention
+
+[Timer]
+OnCalendar=*-*-* 03:35:00 Europe/Prague
+Persistent=true
+RandomizedDelaySec=10m
+Unit=wifimanager-retention.service
+
+[Install]
+WantedBy=timers.target

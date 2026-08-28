@@ -1,0 +1,30 @@
+name: Kontrola zdrojového kódu
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP syntaxe
+        run: find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Shell syntaxe
+        run: |
+          sh -n install.sh
+          sh -n bin/install-monitoring.sh
+          sh -n bin/apply-update.sh
+
+      - name: Ochrana lokálních dat
+        run: |
+          test ! -e config/local.php
+          test -z "$(find storage -type f ! -name .gitkeep -print -quit)"
+          test -z "$(find . -type f \( -name '*.sqlite' -o -name '*.sqlite-wal' -o -name '*.sqlite-shm' \) -print -quit)"

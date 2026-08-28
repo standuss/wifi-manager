@@ -1,0 +1,1 @@
+<section class="panel empty-state error-state"><span><?= icon('alert') ?></span><strong><?= e($title) ?></strong><p><?= e($message) ?></p><a class="button primary" href="<?= e(url('/')) ?>">Zpět na přehled</a></section>

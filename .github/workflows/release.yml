@@ -1,0 +1,70 @@
+name: Vydat WiFi Manager
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ověřit verzi a PHP syntaxi
+        run: |
+          test "v$(tr -d '\r\n' < VERSION)" = "$GITHUB_REF_NAME"
+          find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
+          sh -n install.sh
+          sh -n bin/install-monitoring.sh
+          sh -n bin/apply-update.sh
+
+      - name: Sestavit release ZIP
+        run: |
+          VERSION=$(tr -d '\r\n' < VERSION)
+          mkdir -p dist/stage/wifi-manager
+          rsync -a ./ dist/stage/wifi-manager/ \
+            --exclude .git/ --exclude dist/ --exclude config/local.php \
+            --exclude 'storage/*' --exclude '*.sqlite*'
+          touch dist/stage/wifi-manager/storage/.gitkeep
+          cd dist/stage
+          zip -qr "../wifi-manager-$VERSION.zip" wifi-manager
+
+      - name: Vytvořit doklad původu balíčku
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/wifi-manager-*.zip
+
+      - name: Přiložit doklad pro ověření bez přihlášení
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          ZIP="wifi-manager-$(tr -d '\r\n' < ../VERSION).zip"
+          for ATTEMPT in 1 2 3 4 5; do
+            rm -f sha256*.jsonl
+            if gh attestation download "$ZIP" --repo "$GITHUB_REPOSITORY"; then
+              break
+            fi
+            sleep 2
+          done
+          BUNDLE=$(find . -maxdepth 1 -type f -name 'sha256*.jsonl' -print -quit)
+          test -n "$BUNDLE"
+          mv "$BUNDLE" "$ZIP.attestation.jsonl"
+          gh attestation verify "$ZIP" \
+            --bundle "$ZIP.attestation.jsonl" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners
+
+      - name: Publikovat GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/wifi-manager-*.zip dist/*.attestation.jsonl --verify-tag --generate-notes --title "WiFi Manager ${GITHUB_REF_NAME#v}"

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch WiFi Manager update queue
+
+[Path]
+PathExists=/var/lib/wifimanager/update-requests/install.json
+Unit=wifimanager-update.service
+
+[Install]
+WantedBy=multi-user.target

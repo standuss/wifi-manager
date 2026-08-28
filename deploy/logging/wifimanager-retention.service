@@ -1,0 +1,20 @@
+[Unit]
+Description=WiFi Manager archive retention
+After=wifimanager-nfcapd.service rsyslog.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/php /var/www/wifimanager/bin/log-retention.php
+User=root
+Group=root
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wifimanager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

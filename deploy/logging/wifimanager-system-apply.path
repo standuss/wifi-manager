@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch WiFi Manager system settings queue
+
+[Path]
+PathExists=/var/lib/wifimanager/service-requests/monitoring.json
+Unit=wifimanager-system-apply.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply validated WiFi Manager system settings
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/php /usr/local/lib/wifimanager/apply-system-settings.php
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/default/wifimanager-monitoring /etc/rsyslog.d/30-wifimanager.conf /etc/wifimanager/update.conf /var/lib/wifimanager
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

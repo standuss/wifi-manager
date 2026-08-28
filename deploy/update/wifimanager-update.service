@@ -1,0 +1,20 @@
+[Unit]
+Description=Install a verified WiFi Manager GitHub release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/wifimanager/apply-update.sh
+User=root
+Group=root
+Environment=GH_CONFIG_DIR=/var/lib/wifimanager/gh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/wifimanager /var/lib/wifimanager /usr/local/lib/wifimanager /etc/systemd/system
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+TimeoutStartSec=10min

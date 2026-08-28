@@ -1,0 +1,27 @@
+[Unit]
+Description=WiFi Manager IPFIX collector (nfcapd)
+After=network-online.target
+Wants=network-online.target
+Conflicts=nfdump.service nfdump@default.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/wifimanager-monitoring
+User=wifimanager-log
+Group=www-data
+UMask=0027
+ExecStart=/usr/bin/nfcapd -w ${WFM_NETFLOW_DIR} -b ${WFM_LISTEN_ADDRESS} -p ${WFM_NETFLOW_PORT} -S 2 -t 300 -z=lz4
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wifimanager/netflow
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+Alias /wifimanager /var/www/wifimanager/public
+
+<Directory /var/www/wifimanager/public>
+    Options -Indexes +FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+
