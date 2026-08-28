@@ -29,6 +29,8 @@ jobs:
           sh -n bin/install-github-cli.sh
           sh -n bin/install-monitoring.sh
           sh -n bin/apply-update.sh
+          grep -q 'php-intl' install.sh
+          grep -q 'systemctl restart apache2.service' install.sh
 
       - name: Ochrana lokálních dat
         run: |

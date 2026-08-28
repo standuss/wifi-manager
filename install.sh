@@ -18,7 +18,7 @@ fi
 echo "[1/7] Instaluji systémové balíčky…"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    apache2 libapache2-mod-php php-cli php-sqlite3 php-mbstring php-curl \
+    apache2 libapache2-mod-php php-cli php-sqlite3 php-mbstring php-curl php-intl \
     ca-certificates curl rsync unzip sqlite3 rsyslog nfdump iproute2 util-linux
 
 LISTEN_ADDRESS=${WFM_LISTEN_ADDRESS:-}
@@ -51,10 +51,29 @@ chmod 0750 "$APP_DIR/config"
 
 echo "[4/7] Nastavuji Apache…"
 install -o root -g root -m 0644 "$APP_DIR/deploy/apache.conf.example" /etc/apache2/conf-available/wifimanager.conf
-a2enmod rewrite >/dev/null
+a2enmod alias rewrite >/dev/null
 a2enconf wifimanager >/dev/null
 apache2ctl configtest
-systemctl reload apache2
+systemctl enable apache2.service >/dev/null
+systemctl restart apache2.service
+
+if [ ! -e /etc/apache2/conf-enabled/wifimanager.conf ]; then
+    echo "Konfigurace WiFi Manageru není v Apache aktivní." >&2
+    exit 1
+fi
+if ! apache2ctl -M 2>/dev/null | grep -q 'rewrite_module'; then
+    echo "Modul Apache rewrite_module není aktivní." >&2
+    exit 1
+fi
+HTTP_STATUS=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --max-time 10 "http://127.0.0.1$BASE_PATH/login" || true)
+case "$HTTP_STATUS" in
+    200|301|302) ;;
+    *)
+        echo "Apache neobsluhuje WiFi Manager na $BASE_PATH (HTTP ${HTTP_STATUS:-bez odpovědi})." >&2
+        exit 1
+        ;;
+esac
 
 echo "[5/7] Zapínám synchronizaci RouterOS…"
 install -o root -g root -m 0644 "$APP_DIR/deploy/wifimanager-worker.service" /etc/systemd/system/wifimanager-worker.service
