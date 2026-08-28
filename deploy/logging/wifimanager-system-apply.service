@@ -11,7 +11,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/etc/default/wifimanager-monitoring /etc/rsyslog.d/30-wifimanager.conf /etc/wifimanager/update.conf /var/lib/wifimanager
+# apply-system-settings.php zapisuje konfigurace atomicky přes dočasný soubor
+# ve stejném adresáři a následný rename. Proto musí být zapisovatelné cílové
+# adresáře, ne pouze již existující cílové soubory.
+ReadWritePaths=/etc/default /etc/rsyslog.d /etc/wifimanager /var/lib/wifimanager
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
