@@ -33,6 +33,7 @@ jobs:
           grep -q 'php-intl' install.sh
           grep -q 'systemctl restart apache2.service' install.sh
           grep -q 'nprobe@none.service' bin/install-monitoring.sh
+          grep -q 'nprobe@none.service' bin/apply-update.sh
 
       - name: Ochrana lokálních dat
         run: |

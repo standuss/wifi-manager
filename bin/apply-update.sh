@@ -133,9 +133,10 @@ done
 /usr/bin/systemctl daemon-reload
 
 # Debianí balíček nfdump může po instalaci automaticky spustit vlastní
-# nfcapd@default na UDP/2055. Při aktualizaci ze starších verzí jej musíme
-# stejně jako čistý instalátor vypnout, jinak náš omezený kolektor nenastartuje.
+# nfcapd@default na UDP/2055. Na starších logger serverech může port držet i
+# nprobe@none. Při aktualizaci je vypneme stejně jako při čisté instalaci.
 /usr/bin/systemctl disable --now nfdump@default.service nfdump.service >/dev/null 2>&1 || true
+/usr/bin/systemctl disable --now nprobe@none.service nprobe.service >/dev/null 2>&1 || true
 /usr/bin/systemctl reset-failed wifimanager-nfcapd.service >/dev/null 2>&1 || true
 
 # Jednotky i rsyslog konfigurace už mohou existovat ze starší instalace.
