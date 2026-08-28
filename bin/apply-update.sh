@@ -39,6 +39,7 @@ case "$TAG" in *[!0-9A-Za-z._+-]*|'') write_status failed "Neplatný release tag
 WORK=$(/usr/bin/mktemp -d /var/lib/wifimanager/update-work.XXXXXX)
 MAINTENANCE="$WFM_APP_DIR/storage/update-in-progress"
 ROLLBACK_REQUIRED=0
+FAILURE_MESSAGE="Aktualizace $VERSION selhala. Podrobnosti jsou v systémovém journalu."
 cleanup() {
     rm -rf "$WORK"
 }
@@ -57,27 +58,47 @@ rollback() {
     rm -f "$REQUEST"
     /usr/bin/systemctl start wifimanager-worker.service >/dev/null 2>&1 || true
 }
-trap 'rollback; cleanup' EXIT INT TERM
+on_exit() {
+    EXIT_STATUS=$?
+    trap - EXIT INT TERM
+    if [ "$EXIT_STATUS" -ne 0 ]; then
+        write_status failed "$FAILURE_MESSAGE" "$VERSION" || true
+    fi
+    rollback
+    cleanup
+    exit "$EXIT_STATUS"
+}
+trap on_exit EXIT INT TERM
 
 write_status running "Stahuji a ověřuji release $VERSION." "$VERSION"
+FAILURE_MESSAGE="Nainstalovaná GitHub CLI nepodporuje ověření dokladu původu. Nainstalujte aktuální oficiální balíček gh."
+if ! /usr/bin/gh attestation verify --help >/dev/null 2>&1; then
+    echo "$FAILURE_MESSAGE" >&2
+    exit 1
+fi
+
 mkdir -p "$WORK/download" "$WORK/extract" "$WORK/backup"
 ATTESTATION="$ASSET.attestation.jsonl"
 RELEASE_URL="https://github.com/$REPOSITORY/releases/download/$TAG"
+FAILURE_MESSAGE="Stažení release $VERSION z GitHubu selhalo."
 /usr/bin/curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 \
     --output "$WORK/download/$ASSET" "$RELEASE_URL/$ASSET"
 /usr/bin/curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 \
     --output "$WORK/download/$ATTESTATION" "$RELEASE_URL/$ATTESTATION"
+FAILURE_MESSAGE="Ověření původu release $VERSION selhalo."
 /usr/bin/gh attestation verify "$WORK/download/$ASSET" \
     --bundle "$WORK/download/$ATTESTATION" \
     --repo "$REPOSITORY" \
     --signer-workflow "github.com/$REPOSITORY/.github/workflows/release.yml" \
     --source-ref "refs/tags/$TAG" \
     --deny-self-hosted-runners
+FAILURE_MESSAGE="Kontrola obsahu release $VERSION selhala."
 /usr/bin/unzip -q "$WORK/download/$ASSET" -d "$WORK/extract"
 [ -d "$WORK/extract/wifi-manager" ] || { write_status failed "Release neobsahuje adresář wifi-manager." "$VERSION"; exit 1; }
 [ "$(tr -d '\r\n' < "$WORK/extract/wifi-manager/VERSION")" = "$VERSION" ] || { write_status failed "Verze uvnitř balíčku nesouhlasí." "$VERSION"; exit 1; }
 
 find "$WORK/extract/wifi-manager" -type f -name '*.php' -print0 | xargs -0 -n1 /usr/bin/php -l >/dev/null
+FAILURE_MESSAGE="Záloha současné instalace před aktualizací $VERSION selhala."
 /usr/bin/rsync -a "$WFM_APP_DIR/" "$WORK/backup/"
 DB_PATH=$(/usr/bin/php -r '$c=require $argv[1]."/app/bootstrap.php";echo $c["config"]->get("database.path");' "$WFM_APP_DIR")
 if [ -f "$DB_PATH" ]; then /usr/bin/sqlite3 "$DB_PATH" ".backup '$WORK/database.sqlite'"; fi
@@ -85,6 +106,7 @@ if [ -f "$DB_PATH" ]; then /usr/bin/sqlite3 "$DB_PATH" ".backup '$WORK/database.
 touch "$MAINTENANCE"
 /usr/bin/systemctl stop wifimanager-worker.service >/dev/null 2>&1 || true
 ROLLBACK_REQUIRED=1
+FAILURE_MESSAGE="Instalace release $VERSION selhala; obnovuji předchozí verzi."
 /usr/bin/rsync -a --delete --exclude=config/local.php --exclude=storage/ "$WORK/extract/wifi-manager/" "$WFM_APP_DIR/"
 chown -R root:www-data "$WFM_APP_DIR"
 chmod 2770 "$WFM_APP_DIR/storage" "$WFM_APP_DIR/config"
@@ -128,4 +150,5 @@ ROLLBACK_REQUIRED=0
 rm -f "$MAINTENANCE" "$REQUEST"
 /usr/bin/systemctl restart wifimanager-worker.service
 write_status done "Aktualizace $VERSION byla úspěšně nainstalována." "$VERSION"
-trap 'cleanup' EXIT INT TERM
+trap - EXIT INT TERM
+cleanup

@@ -15,7 +15,8 @@ fi
 php -r 'if (filter_var($argv[1], FILTER_VALIDATE_IP) === false) { fwrite(STDERR, "Neplatná IP adresa.\n"); exit(1); }' "$LISTEN_ADDRESS"
 
 apt-get update
-apt-get install -y --no-install-recommends rsyslog nfdump php-cli gh curl ca-certificates unzip rsync sqlite3 iproute2
+apt-get install -y --no-install-recommends rsyslog nfdump php-cli curl ca-certificates unzip rsync sqlite3 iproute2
+"$APP_DIR/bin/install-github-cli.sh"
 
 getent group www-data >/dev/null
 if ! id wifimanager-log >/dev/null 2>&1; then

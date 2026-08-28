@@ -22,6 +22,7 @@ jobs:
           test "v$(tr -d '\r\n' < VERSION)" = "$GITHUB_REF_NAME"
           find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
           sh -n install.sh
+          sh -n bin/install-github-cli.sh
           sh -n bin/install-monitoring.sh
           sh -n bin/apply-update.sh
 

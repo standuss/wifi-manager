@@ -20,6 +20,7 @@ jobs:
       - name: Shell syntaxe
         run: |
           sh -n install.sh
+          sh -n bin/install-github-cli.sh
           sh -n bin/install-monitoring.sh
           sh -n bin/apply-update.sh
 
