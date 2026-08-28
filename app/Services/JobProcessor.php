@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace WifiManager\Services;
 
 use WifiManager\Database;
+use WifiManager\RouterOS\RouterOsException;
 use WifiManager\RouterOS\RouterRepository;
 
 final class JobProcessor
@@ -28,6 +29,7 @@ final class JobProcessor
             $repository = $this->routerFactory->repository((int) $job['router_id']);
             match ((string) $job['type']) {
                 'register_device' => $this->registerDevice($jobId, $repository, $job['payload']),
+                'update_device' => $this->registerDevice($jobId, $repository, $job['payload']),
                 'toggle_network' => $this->toggleNetwork($jobId, $repository, $job['payload']),
                 'create_network' => $this->createNetwork($jobId, $repository, $job['payload']),
                 'configure_monitoring' => $this->configureMonitoring($jobId, $repository, $job['payload']),
@@ -71,17 +73,38 @@ final class JobProcessor
         $actions = $repository->rows('/system/logging/action/print');
         $action = null;
         foreach ($actions as $row) if (($row['name'] ?? '') === 'wifimanager-remote') $action = $row;
-        $attributes = [
-            'target' => 'remote',
-            'remote-port' => $remoteEndpoint,
-            'remote-protocol' => $transport,
-            'remote-log-format' => $transport === 'tcp' ? 'cef' : 'syslog',
-            'syslog-time-format' => 'iso8601',
-        ];
-        if ($action === null) {
-            $repository->add('/system/logging/action', ['name' => 'wifimanager-remote'] + $attributes);
-        } else {
-            $repository->set('/system/logging/action', (string) $action['.id'], $attributes);
+        $legacyLogging = false;
+        foreach ($actions as $row) {
+            if (array_key_exists('remote', $row)) {
+                $legacyLogging = true;
+                break;
+            }
+        }
+        $applyLoggingAction = function (bool $legacy) use ($repository, $action, $target, $syslogPort, $remoteEndpoint, $transport): void {
+            $attributes = [
+                'target' => 'remote',
+                'remote-protocol' => $transport,
+                'remote-log-format' => $transport === 'tcp' ? 'cef' : 'syslog',
+                'syslog-time-format' => 'iso8601',
+            ];
+            if ($legacy) {
+                $attributes['remote'] = $target;
+                $attributes['remote-port'] = (string) $syslogPort;
+            } else {
+                $attributes['remote-port'] = $remoteEndpoint;
+            }
+            if ($action === null) {
+                $repository->add('/system/logging/action', ['name' => 'wifimanager-remote'] + $attributes);
+            } else {
+                $repository->set('/system/logging/action', (string) $action['.id'], $attributes);
+            }
+        };
+        try {
+            $applyLoggingAction($legacyLogging);
+        } catch (RouterOsException) {
+            // RouterOS 7.18+ changed the logging endpoint representation. Some
+            // point releases do not expose enough metadata to detect it first.
+            $applyLoggingAction(!$legacyLogging);
         }
 
         $topics = ['info,!firewall', 'warning', 'error', 'critical'];
@@ -97,7 +120,7 @@ final class JobProcessor
 
         $this->jobs->progress($jobId, 'Nastavuji export IPFIX na MikroTiku');
         $repository->setSingleton('/ip/traffic-flow', [
-            'enabled' => 'yes', 'interfaces' => 'all', 'active-flow-timeout' => '5m', 'inactive-flow-timeout' => '15s',
+            'enabled' => 'yes', 'active-flow-timeout' => '5m', 'inactive-flow-timeout' => '15s',
         ]);
         $repository->setSingleton('/ip/traffic-flow/ipfix', [
             'src-mac-address' => 'yes',
@@ -133,7 +156,7 @@ final class JobProcessor
 
         $verifyAction = false;
         foreach ($repository->rows('/system/logging/action/print') as $row) {
-            if (($row['name'] ?? '') === 'wifimanager-remote' && ($row['remote-port'] ?? '') === $remoteEndpoint) $verifyAction = true;
+            if (self::loggingActionMatches($row, $target, $syslogPort, $remoteEndpoint)) $verifyAction = true;
         }
         $verifyFlow = false;
         foreach ($repository->rows('/ip/traffic-flow/target/print') as $row) {
@@ -155,6 +178,13 @@ final class JobProcessor
         $rateDown = (string) ($payload['rate_down'] ?? $settings['default_rate_down']);
         $rateUp = (string) ($payload['rate_up'] ?? $settings['default_rate_up']);
 
+        $deviceStatement = $this->database->pdo()->prepare('SELECT * FROM devices WHERE id = :id');
+        $deviceStatement->execute(['id' => $deviceId]);
+        $device = $deviceStatement->fetch();
+        if (!is_array($device)) throw new \RuntimeException('Zařízení nebylo v evidenci nalezeno.');
+        $oldIp = (string) ($device['current_ip'] ?? '');
+        $storedQueueId = (string) ($device['mikrotik_queue_id'] ?? '');
+
         $snapshot = $repository->fastSnapshot();
         foreach ($snapshot['leases'] as $lease) {
             if (($lease['address'] ?? '') === $ip && self::safeMac((string) ($lease['mac-address'] ?? '')) !== $mac) {
@@ -170,7 +200,7 @@ final class JobProcessor
             ]);
         } else {
             $repository->set('/interface/wifi/access-list', (string) $access['.id'], [
-                'action' => 'accept', 'comment' => $name, 'disabled' => 'no', 'interface' => '', 'vlan-id' => $approvedVlan,
+                'action' => 'accept', 'comment' => $name, 'disabled' => 'no', 'vlan-id' => $approvedVlan,
             ]);
         }
 
@@ -197,7 +227,7 @@ final class JobProcessor
         }
 
         $this->jobs->progress($jobId, 'Nastavuji omezení rychlosti');
-        $queue = self::findQueue($snapshot['queues'], $ip);
+        $queue = self::findQueueForDevice($snapshot['queues'], $mac, $ip, $oldIp, $storedQueueId);
         if ($queue === null) {
             $repository->add('/queue/simple', [
                 'name' => $name, 'target' => $ip . '/32', 'max-limit' => $rateUp . '/' . $rateDown, 'comment' => $mac,
@@ -223,22 +253,40 @@ final class JobProcessor
             throw new \RuntimeException('MikroTik nepotvrdil všechny části registrace.');
         }
 
-        $this->database->transaction(function () use ($deviceId, $ip, $verifiedAccess, $verifiedLease, $verifiedQueue): void {
+        $personName = trim((string) ($payload['person_name'] ?? ''));
+        $personNote = trim((string) ($payload['note'] ?? ''));
+        $this->database->transaction(function () use ($deviceId, $ip, $name, $rateDown, $rateUp, $personName, $personNote, $verifiedAccess, $verifiedLease, $verifiedQueue): void {
+            $current = $this->database->pdo()->prepare('SELECT person_id, current_ip FROM devices WHERE id = :id');
+            $current->execute(['id' => $deviceId]);
+            $currentDevice = $current->fetch();
+            if (!is_array($currentDevice)) throw new \RuntimeException('Zařízení během aktualizace zmizelo z evidence.');
+            $personId = isset($currentDevice['person_id']) ? (int) $currentDevice['person_id'] : null;
+            if ($personName !== '') {
+                $personId = $this->resolvePersonForDevice($deviceId, $personId, $personName, $personNote);
+            }
             $statement = $this->database->pdo()->prepare(
-                "UPDATE devices SET current_ip = :ip, registration_state = 'registered', mikrotik_access_id = :access_id,
-                 mikrotik_lease_id = :lease_id, mikrotik_queue_id = :queue_id, registered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = :id"
+                "UPDATE devices SET person_id = :person_id, name = :name, current_ip = :ip, rate_down = :rate_down, rate_up = :rate_up,
+                 registration_state = 'registered', mikrotik_access_id = :access_id, mikrotik_lease_id = :lease_id,
+                 mikrotik_queue_id = :queue_id, registered_at = COALESCE(registered_at, CURRENT_TIMESTAMP),
+                 updated_at = CURRENT_TIMESTAMP WHERE id = :id"
             );
             $statement->execute([
+                'person_id' => $personId,
+                'name' => $name,
                 'ip' => $ip,
+                'rate_down' => $rateDown,
+                'rate_up' => $rateUp,
                 'access_id' => $verifiedAccess['.id'] ?? null,
                 'lease_id' => $verifiedLease['.id'] ?? null,
                 'queue_id' => $verifiedQueue['.id'] ?? null,
                 'id' => $deviceId,
             ]);
-            $this->database->pdo()->prepare('UPDATE ip_assignments SET valid_to = CURRENT_TIMESTAMP WHERE device_id = :id AND valid_to IS NULL')
-                ->execute(['id' => $deviceId]);
-            $this->database->pdo()->prepare('INSERT INTO ip_assignments (device_id, ip_address) VALUES (:id, :ip)')
-                ->execute(['id' => $deviceId, 'ip' => $ip]);
+            if ((string) ($currentDevice['current_ip'] ?? '') !== $ip) {
+                $this->database->pdo()->prepare('UPDATE ip_assignments SET valid_to = CURRENT_TIMESTAMP WHERE device_id = :id AND valid_to IS NULL')
+                    ->execute(['id' => $deviceId]);
+                $this->database->pdo()->prepare('INSERT INTO ip_assignments (device_id, ip_address) VALUES (:id, :ip)')
+                    ->execute(['id' => $deviceId, 'ip' => $ip]);
+            }
         });
     }
 
@@ -346,6 +394,57 @@ final class JobProcessor
             if (in_array($ip . '/32', $targets, true)) return $row;
         }
         return null;
+    }
+
+    /** @param list<array<string,string>> $rows @return array<string,string>|null */
+    private static function findQueueForDevice(array $rows, string $mac, string $newIp, string $oldIp, string $storedId): ?array
+    {
+        foreach ($rows as $row) {
+            if ($storedId !== '' && (string) ($row['.id'] ?? '') === $storedId) return $row;
+        }
+        foreach ($rows as $row) {
+            if (self::safeMac((string) ($row['comment'] ?? '')) === $mac) return $row;
+        }
+        $queue = self::findQueue($rows, $newIp);
+        if ($queue !== null || $oldIp === '' || $oldIp === $newIp) return $queue;
+        return self::findQueue($rows, $oldIp);
+    }
+
+    /** @param array<string,mixed> $row */
+    private static function loggingActionMatches(array $row, string $target, int $port, string $endpoint): bool
+    {
+        if (($row['name'] ?? '') !== 'wifimanager-remote') return false;
+        $legacyTarget = trim((string) ($row['remote'] ?? ''), '[]');
+        if ($legacyTarget !== '') {
+            return $legacyTarget === trim($target, '[]') && (int) ($row['remote-port'] ?? 0) === $port;
+        }
+        return (string) ($row['remote-port'] ?? '') === $endpoint;
+    }
+
+    private function resolvePersonForDevice(int $deviceId, ?int $currentPersonId, string $name, string $note): int
+    {
+        $people = $this->database->pdo()->query('SELECT id, name FROM people WHERE active = 1')->fetchAll();
+        foreach ($people as $person) {
+            if (mb_strtolower(trim((string) $person['name'])) !== mb_strtolower($name)) continue;
+            $personId = (int) $person['id'];
+            $this->database->pdo()->prepare('UPDATE people SET name = :name, note = :note, updated_at = CURRENT_TIMESTAMP WHERE id = :id')
+                ->execute(['name' => $name, 'note' => $note !== '' ? $note : null, 'id' => $personId]);
+            return $personId;
+        }
+
+        if ($currentPersonId !== null) {
+            $count = $this->database->pdo()->prepare("SELECT COUNT(*) FROM devices WHERE person_id = :person_id AND id != :device_id AND registration_state != 'archived'");
+            $count->execute(['person_id' => $currentPersonId, 'device_id' => $deviceId]);
+            if ((int) $count->fetchColumn() === 0) {
+                $this->database->pdo()->prepare('UPDATE people SET name = :name, note = :note, updated_at = CURRENT_TIMESTAMP WHERE id = :id')
+                    ->execute(['name' => $name, 'note' => $note !== '' ? $note : null, 'id' => $currentPersonId]);
+                return $currentPersonId;
+            }
+        }
+
+        $statement = $this->database->pdo()->prepare('INSERT INTO people (name, note) VALUES (:name, :note)');
+        $statement->execute(['name' => $name, 'note' => $note !== '' ? $note : null]);
+        return (int) $this->database->pdo()->lastInsertId();
     }
 
     private static function safeMac(string $mac): ?string

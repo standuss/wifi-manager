@@ -41,6 +41,23 @@
     dialog?.addEventListener('click', event => {
         if (event.target === dialog) dialog.close();
     });
+    const deviceEditDialog = q('#device-edit-dialog');
+    qa('[data-edit-device]').forEach(button => button.addEventListener('click', () => {
+        if (!deviceEditDialog) return;
+        q('[data-edit-id]', deviceEditDialog).value = button.dataset.id || '';
+        q('[data-edit-person]', deviceEditDialog).value = button.dataset.person || '';
+        q('[data-edit-note]', deviceEditDialog).value = button.dataset.note || '';
+        q('[data-edit-name]', deviceEditDialog).value = button.dataset.device || '';
+        q('[data-edit-mac]', deviceEditDialog).value = button.dataset.mac || '';
+        q('[data-edit-ip]', deviceEditDialog).value = button.dataset.ip || '';
+        q('[data-edit-rate-down]', deviceEditDialog).value = button.dataset.rateDown || '';
+        q('[data-edit-rate-up]', deviceEditDialog).value = button.dataset.rateUp || '';
+        deviceEditDialog.showModal();
+        q('[data-edit-name]', deviceEditDialog)?.focus();
+    }));
+    deviceEditDialog?.addEventListener('click', event => {
+        if (event.target === deviceEditDialog) deviceEditDialog.close();
+    });
     const networkDialog = q('#network-dialog');
     q('[data-open-network]')?.addEventListener('click', () => networkDialog?.showModal());
     networkDialog?.addEventListener('click', event => {

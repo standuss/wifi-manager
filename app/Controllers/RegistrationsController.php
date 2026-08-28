@@ -113,6 +113,79 @@ final class RegistrationsController
         redirect('/registrations');
     }
 
+    public function update(): void
+    {
+        $this->auth->requireAdmin();
+        Csrf::enforce();
+        $deviceId = (int) ($_POST['device_id'] ?? 0);
+        $statement = $this->database->pdo()->prepare(
+            'SELECT d.*, p.name AS person_name, p.note AS person_note FROM devices d
+             LEFT JOIN people p ON p.id = d.person_id WHERE d.id = :id'
+        );
+        $statement->execute(['id' => $deviceId]);
+        $device = $statement->fetch();
+        if (!is_array($device) || ($device['registration_state'] ?? '') === 'archived') {
+            throw new \RuntimeException('Zařízení nebylo nalezeno nebo je archivované.');
+        }
+
+        $settings = $this->settings->all();
+        $personName = trim((string) ($_POST['person_name'] ?? ''));
+        $note = trim((string) ($_POST['note'] ?? ''));
+        $deviceName = trim((string) ($_POST['device_name'] ?? ''));
+        $ip = trim((string) ($_POST['ip_address'] ?? ''));
+        $rateDown = strtoupper(trim((string) ($_POST['rate_down'] ?? $settings['default_rate_down'])));
+        $rateUp = strtoupper(trim((string) ($_POST['rate_up'] ?? $settings['default_rate_up'])));
+
+        if ($personName === '' || mb_strlen($personName) > 120) throw new \InvalidArgumentException('Zadejte jméno držitele zařízení.');
+        if (mb_strlen($note) > 250) throw new \InvalidArgumentException('Poznámka může mít nejvýše 250 znaků.');
+        if ($deviceName === '' || mb_strlen($deviceName) > 120) throw new \InvalidArgumentException('Zadejte název zařízení.');
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) || !$this->ipInRange($ip, $settings['static_ip_start'], $settings['static_ip_end'])) {
+            throw new \InvalidArgumentException('IP adresa není v povoleném statickém rozsahu.');
+        }
+        if (!preg_match('/^\d+(K|M|G)$/', $rateDown) || !preg_match('/^\d+(K|M|G)$/', $rateUp)) {
+            throw new \InvalidArgumentException('Rychlost zadejte například jako 2M.');
+        }
+
+        $ipCheck = $this->database->pdo()->prepare(
+            "SELECT COUNT(*) FROM devices WHERE current_ip = :ip AND id != :id AND registration_state != 'archived'"
+        );
+        $ipCheck->execute(['ip' => $ip, 'id' => $deviceId]);
+        if ((int) $ipCheck->fetchColumn() > 0) throw new \RuntimeException('Tuto statickou IP už používá jiné evidované zařízení.');
+
+        foreach ($this->database->pdo()->query('SELECT id, name FROM people WHERE active = 1')->fetchAll() as $person) {
+            if (mb_strtolower(trim((string) $person['name'])) !== mb_strtolower($personName)) continue;
+            if ((int) $person['id'] !== (int) ($device['person_id'] ?? 0)) {
+                $count = $this->database->pdo()->prepare(
+                    "SELECT COUNT(*) FROM devices WHERE person_id = :person_id AND id != :device_id AND registration_state != 'archived'"
+                );
+                $count->execute(['person_id' => $person['id'], 'device_id' => $deviceId]);
+                if ((int) $count->fetchColumn() >= (int) ($settings['max_devices_per_person'] ?? 1)) {
+                    throw new \RuntimeException('Vybraný držitel už má maximální povolený počet zařízení.');
+                }
+            }
+            break;
+        }
+
+        $routerId = (int) $this->database->pdo()->query('SELECT id FROM routers WHERE enabled = 1 ORDER BY id LIMIT 1')->fetchColumn();
+        if ($routerId <= 0) throw new \RuntimeException('Nejprve nastavte připojení k MikroTiku.');
+        $user = $this->auth->user();
+        $jobId = $this->jobs->enqueue($routerId, 'update_device', [
+            'device_id' => $deviceId,
+            'device_name' => $deviceName,
+            'person_name' => $personName,
+            'note' => $note,
+            'mac_address' => (string) $device['mac_address'],
+            'ip_address' => $ip,
+            'rate_down' => $rateDown,
+            'rate_up' => $rateUp,
+        ], (int) $user['id']);
+        $this->audit->log((int) $user['id'], 'device.update.requested', 'Úprava zařízení byla zařazena', 'device', $deviceId, [
+            'device_name' => $deviceName, 'ip_address' => $ip, 'rate_down' => $rateDown, 'rate_up' => $rateUp, 'job_id' => $jobId,
+        ], request_ip());
+        flash('success', 'Úprava zařízení byla předána workeru. Po dokončení se změní MikroTik i evidence.');
+        redirect('/registrations');
+    }
+
     /** @param array<string,string> $settings */
     private function nextFreeIp(array $settings): string
     {

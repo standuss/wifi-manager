@@ -75,6 +75,7 @@ $routes = [
     'GET /clients' => ['clients', 'index'],
     'GET /registrations' => ['registrations', 'index'],
     'POST /registrations' => ['registrations', 'store'],
+    'POST /registrations/update' => ['registrations', 'update'],
     'GET /networks' => ['networks', 'index'],
     'POST /networks' => ['networks', 'store'],
     'POST /networks/toggle' => ['networks', 'toggle'],

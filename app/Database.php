@@ -64,6 +64,8 @@ final class Database
         $this->addColumn('admin_users', 'notify_new_device', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('admin_users', 'notify_backup_result', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('admin_users', 'notify_monitoring_problem', 'INTEGER NOT NULL DEFAULT 0');
+        $this->addColumn('devices', 'rate_down', "TEXT NOT NULL DEFAULT ''");
+        $this->addColumn('devices', 'rate_up', "TEXT NOT NULL DEFAULT ''");
 
         // Existing clients must be considered known. Otherwise the first sync
         // after an update would send a misleading notification storm.
@@ -75,7 +77,7 @@ final class Database
             "INSERT OR IGNORE INTO discovered_devices (router_id, mac_address, hostname, ip_address, first_seen_at, last_seen_at)
              SELECT r.id, d.mac_address, d.name, d.current_ip, d.created_at, d.updated_at FROM routers r CROSS JOIN devices d"
         );
-        $this->pdo->exec("INSERT INTO schema_meta (key, value) VALUES ('version', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+        $this->pdo->exec("INSERT INTO schema_meta (key, value) VALUES ('version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
     }
 
     private function addColumn(string $table, string $column, string $definition): void

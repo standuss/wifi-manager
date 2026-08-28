@@ -28,6 +28,7 @@ jobs:
           php tests/api_client_reply_test.php
           php tests/log_archive_flow_test.php
           php tests/schema_migration_test.php
+          php tests/job_processor_compatibility_test.php
 
       - name: Sestavit release ZIP
         run: |

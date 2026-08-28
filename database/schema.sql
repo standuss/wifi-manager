@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO schema_meta (key, value) VALUES ('version', '4')
+INSERT INTO schema_meta (key, value) VALUES ('version', '5')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS devices (
     name TEXT NOT NULL,
     mac_address TEXT NOT NULL UNIQUE,
     current_ip TEXT,
+    rate_down TEXT NOT NULL DEFAULT '',
+    rate_up TEXT NOT NULL DEFAULT '',
     registration_state TEXT NOT NULL DEFAULT 'pending' CHECK (registration_state IN ('pending', 'registering', 'registered', 'incomplete', 'blocked', 'archived')),
     mikrotik_access_id TEXT,
     mikrotik_lease_id TEXT,
