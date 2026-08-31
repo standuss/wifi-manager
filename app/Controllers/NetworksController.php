@@ -10,6 +10,7 @@ use WifiManager\Csrf;
 use WifiManager\Database;
 use WifiManager\Services\AuditService;
 use WifiManager\Services\JobService;
+use WifiManager\Services\RouterFactory;
 use WifiManager\View;
 
 final class NetworksController
@@ -21,6 +22,7 @@ final class NetworksController
         private readonly JobService $jobs,
         private readonly AuditService $audit,
         private readonly Crypto $crypto,
+        private readonly RouterFactory $routerFactory,
     ) {
     }
 
@@ -55,6 +57,56 @@ final class NetworksController
         ], (int) $user['id']);
         $this->audit->log((int) $user['id'], 'network.toggle.requested', ($enable ? 'Zapnutí' : 'Vypnutí') . ' Wi‑Fi ' . $network['ssid'], 'wifi_network', $id, ['job_id' => $jobId], request_ip());
         flash('success', 'Změna stavu Wi‑Fi byla zařazena.');
+        redirect('/networks');
+    }
+
+    public function delete(): void
+    {
+        $this->auth->requireAdmin();
+        Csrf::enforce();
+        $id = (int) ($_POST['id'] ?? 0);
+        $statement = $this->database->pdo()->prepare('SELECT * FROM wifi_networks WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $id]);
+        $network = $statement->fetch();
+        if (!is_array($network)) throw new \RuntimeException('Wi‑Fi profil nebyl nalezen.');
+
+        $repository = $this->routerFactory->repository((int) $network['router_id']);
+        $snapshot = $repository->fullSnapshot();
+        $configName = (string) $network['config_name'];
+        $changedRules = [];
+
+        try {
+            foreach ($snapshot['provisioning'] ?? [] as $rule) {
+                if (!isset($rule['.id'])) continue;
+                $slaves = array_values(array_filter(array_map('trim', explode(',', (string) ($rule['slave-configurations'] ?? '')))));
+                if (!in_array($configName, $slaves, true)) continue;
+                $changedRules[(string) $rule['.id']] = (string) ($rule['slave-configurations'] ?? '');
+                $slaves = array_values(array_filter($slaves, static fn (string $name): bool => $name !== $configName));
+                $repository->set('/interface/wifi/provisioning', (string) $rule['.id'], ['slave-configurations' => implode(',', $slaves)]);
+            }
+            $repository->remove('/interface/wifi/configuration', (string) $network['mikrotik_id']);
+        } catch (\Throwable $exception) {
+            foreach ($changedRules as $ruleId => $original) {
+                try {
+                    $repository->set('/interface/wifi/provisioning', $ruleId, ['slave-configurations' => $original]);
+                } catch (\Throwable) {
+                }
+            }
+            throw $exception;
+        }
+
+        $this->database->pdo()->prepare('DELETE FROM wifi_networks WHERE id = :id')->execute(['id' => $id]);
+        $user = $this->auth->user();
+        $this->audit->log(
+            (int) $user['id'],
+            'network.deleted',
+            'Wi‑Fi profil byl smazán: ' . $network['ssid'] . ' (' . $configName . ')',
+            'wifi_network',
+            $id,
+            ['mikrotik_id' => $network['mikrotik_id']],
+            request_ip(),
+        );
+        flash('success', 'Wi‑Fi profil byl odstraněn z MikroTiku i WiFi Manageru.');
         redirect('/networks');
     }
 
