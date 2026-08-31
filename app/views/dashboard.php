@@ -2,12 +2,6 @@
 $routerStatus = $router['status'] ?? 'unconfigured';
 $statusLabel = ['online' => 'MikroTik online', 'offline' => 'MikroTik nedostupný', 'error' => 'Chyba spojení', 'unconfigured' => 'Čeká na nastavení'][$routerStatus] ?? 'Neznámý stav';
 ?>
-<section class="status-ribbon <?= e($routerStatus) ?>">
-    <div class="status-ribbon-icon"><?= icon($routerStatus === 'online' ? 'check' : 'server') ?></div>
-    <div><strong><?= e($statusLabel) ?></strong><span><?= $router ? e(($router['identity'] ?: $router['name']) . ' · ' . $router['host'] . ':' . $router['port']) : 'Nastavte připojení k RouterOS API' ?></span></div>
-    <div class="status-ribbon-meta"><span>Poslední synchronizace</span><strong data-last-sync><?= e(format_datetime($router['last_sync_at'] ?? null)) ?></strong></div>
-    <?php if ($auth->isAdmin()): ?><a class="button subtle" href="<?= e(url('/settings')) ?>"><?= icon('settings') ?> Nastavení</a><?php endif; ?>
-</section>
 
 <section class="metric-grid">
     <article class="metric-card blue"><span class="metric-icon"><?= icon('devices') ?></span><div><small>PŘIPOJENO</small><strong data-count-clients><?= (int) $stats['clients'] ?></strong><span>aktivních zařízení</span></div><i class="metric-pulse"></i></article>
@@ -36,11 +30,18 @@ $statusLabel = ['online' => 'MikroTik online', 'offline' => 'MikroTik nedostupn�
     </div>
 </section>
 
+<section class="status-ribbon <?= e($routerStatus) ?>">
+    <div class="status-ribbon-icon"><?= icon($routerStatus === 'online' ? 'check' : 'server') ?></div>
+    <div><strong><?= e($statusLabel) ?></strong><span><?= $router ? e(($router['identity'] ?: $router['name']) . ' · ' . $router['host'] . ':' . $router['port']) : 'Nastavte připojení k RouterOS API' ?></span></div>
+    <div class="status-ribbon-meta"><span>Poslední synchronizace</span><strong data-last-sync><?= e(format_datetime($router['last_sync_at'] ?? null)) ?></strong></div>
+    <?php if ($auth->isAdmin()): ?><a class="button subtle" href="<?= e(url('/settings')) ?>"><?= icon('settings') ?> Nastavení</a><?php endif; ?>
+</section>
+
 <?php if ($jobs !== []): ?>
 <section class="panel compact-panel">
     <header class="panel-header"><div><span class="panel-kicker">SYNCHRONIZACE</span><h2>Probíhající změny</h2></div></header>
     <div class="job-list">
-        <?php foreach ($jobs as $job): ?><div class="job-row"><span class="job-state <?= e($job['status']) ?>"><?= icon($job['status'] === 'failed' ? 'alert' : 'refresh') ?></span><div><strong><?= e($job['progress'] ?: $job['type']) ?></strong><small><?= e($job['last_error'] ?: format_datetime($job['created_at'])) ?></small></div><span class="badge <?= e($job['status']) ?>"><?= e(['pending'=>'Čeká','running'=>'Probíhá','failed'=>'Chyba'][$job['status']] ?? $job['status']) ?></span></div><?php endforeach; ?>
+        <?php foreach ($jobs as $job): ?><div class="job-row"><span class="job-state <?= e($job['status']) ?>"><?= icon($job['status'] === 'failed' ? 'alert' : 'refresh') ?></span><div><strong><?= e($job['progress'] ?: $job['type']) ?></strong><small><?php if ($job['last_error']): ?><?= e($job['last_error']) ?> · <?= e(format_datetime($job['finished_at'] ?: $job['created_at'])) ?><?php else: ?><?= e(format_datetime($job['created_at'])) ?><?php endif; ?></small></div><span class="badge <?= e($job['status']) ?>"><?= e(['pending'=>'Čeká','running'=>'Probíhá','failed'=>'Chyba'][$job['status']] ?? $job['status']) ?></span></div><?php endforeach; ?>
     </div>
 </section>
 <?php endif; ?>
