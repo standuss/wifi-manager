@@ -72,6 +72,16 @@ function normalize_mac(string $mac): string
     return implode(':', str_split($hex, 2));
 }
 
+function is_private_mac(string $mac): bool
+{
+    try {
+        $normalized = normalize_mac($mac);
+    } catch (Throwable) {
+        return false;
+    }
+    return (hexdec(substr($normalized, 0, 2)) & 0x02) === 0x02;
+}
+
 function signal_class(?int $signal): string
 {
     if ($signal === null) return 'muted';

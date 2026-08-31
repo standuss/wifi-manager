@@ -44,15 +44,17 @@ final class ClientsController
         $mac = normalize_mac((string) ($_POST['mac_address'] ?? ''));
 
         $statement = $this->database->pdo()->prepare(
-            'SELECT router_id, mac_address FROM connected_clients WHERE mac_address = :mac LIMIT 1'
+            'SELECT router_id, mac_address, capsman_type FROM connected_clients WHERE mac_address = :mac LIMIT 1'
         );
         $statement->execute(['mac' => $mac]);
         $client = $statement->fetch();
         if (!is_array($client)) throw new \RuntimeException('Zařízení už není připojené.');
 
         $repository = $this->routerFactory->repository((int) $client['router_id']);
+        $type = (string) ($client['capsman_type'] ?? 'wifi') === 'legacy' ? 'legacy' : 'wifi';
+        $menu = $repository->menu($type, 'registration-table');
         $found = false;
-        foreach ($repository->rows('/interface/wifi/registration-table/print', ['.id', 'mac-address']) as $row) {
+        foreach ($repository->rows($menu . '/print', ['.id', 'mac-address']) as $row) {
             if (!isset($row['.id'], $row['mac-address'])) continue;
             try {
                 $candidate = normalize_mac((string) $row['mac-address']);
@@ -60,7 +62,7 @@ final class ClientsController
                 continue;
             }
             if ($candidate !== $mac) continue;
-            $repository->remove('/interface/wifi/registration-table', (string) $row['.id']);
+            $repository->remove($menu, (string) $row['.id']);
             $found = true;
         }
         if (!$found) throw new \RuntimeException('Aktuální Wi‑Fi spojení už na MikroTiku nebylo nalezeno.');
@@ -69,7 +71,7 @@ final class ClientsController
             ->execute(['router_id' => (int) $client['router_id'], 'mac' => $mac]);
 
         $user = $this->auth->user();
-        $this->audit->log((int) $user['id'], 'client.disconnect', 'Aktuální Wi‑Fi spojení bylo odpojeno', 'client', $mac, [], request_ip());
+        $this->audit->log((int) $user['id'], 'client.disconnect', 'Aktuální Wi‑Fi spojení bylo odpojeno', 'client', $mac, ['capsman_type' => $type], request_ip());
         flash('success', 'Zařízení bylo odpojeno. Klient se může automaticky připojit znovu.');
         redirect('/clients');
     }

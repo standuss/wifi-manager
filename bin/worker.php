@@ -12,6 +12,7 @@ use WifiManager\Services\SyncService;
 use WifiManager\Services\SmtpMailer;
 use WifiManager\Services\NotificationService;
 use WifiManager\Services\BackupService;
+use WifiManager\Services\ConnectionEventService;
 
 $container = require dirname(__DIR__) . '/app/bootstrap.php';
 extract($container);
@@ -25,6 +26,7 @@ $notifications = new NotificationService($database, $settings, $crypto, new Smtp
 $backups = new BackupService($database, $config, $settings, $jobService, $crypto, $notifications);
 $processor = new JobProcessor($database, $routerFactory, $settings, $jobService, $audit, $backups);
 $sync = new SyncService($database, $routerFactory, $settings, $crypto, $notifications);
+$connectionEvents = new ConnectionEventService($database, $config);
 
 $once = in_array('--once', $argv, true);
 $fastInterval = max(2, (int) $config->get('sync.fast_interval_seconds', 3));
@@ -33,6 +35,11 @@ $lastFull = 0;
 
 do {
     $cycleStarted = time();
+    try {
+        $connectionEvents->ingest();
+    } catch (Throwable $exception) {
+        fwrite(STDERR, sprintf("[%s] Import událostí připojení: %s\n", date('c'), $exception->getMessage()));
+    }
     $processed = 0;
     while ($processed < 10 && $processor->processOne()) $processed++;
 

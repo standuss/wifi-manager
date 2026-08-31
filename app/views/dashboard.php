@@ -30,18 +30,15 @@ $statusLabel = ['online' => 'MikroTik online', 'offline' => 'MikroTik nedostupn�
     </div>
 </section>
 
-<section class="status-ribbon <?= e($routerStatus) ?>">
-    <div class="status-ribbon-icon"><?= icon($routerStatus === 'online' ? 'check' : 'server') ?></div>
-    <div><strong><?= e($statusLabel) ?></strong><span><?= $router ? e(($router['identity'] ?: $router['name']) . ' · ' . $router['host'] . ':' . $router['port']) : 'Nastavte připojení k RouterOS API' ?></span></div>
-    <div class="status-ribbon-meta"><span>Poslední synchronizace</span><strong data-last-sync><?= e(format_datetime($router['last_sync_at'] ?? null)) ?></strong></div>
-    <?php if ($auth->isAdmin()): ?><a class="button subtle" href="<?= e(url('/settings')) ?>"><?= icon('settings') ?> Nastavení</a><?php endif; ?>
-</section>
-
-<?php if ($jobs !== []): ?>
 <section class="panel compact-panel">
-    <header class="panel-header"><div><span class="panel-kicker">SYNCHRONIZACE</span><h2>Probíhající změny</h2></div></header>
+    <header class="panel-header"><div><span class="panel-kicker">SYNCHRONIZACE</span><h2>Stav MikroTiku a změn</h2></div><?php if ($auth->isAdmin()): ?><div class="panel-actions"><form method="post" action="<?= e(url('/jobs/clear')) ?>" data-confirm="Vyčistit dokončené a chybové záznamy synchronizace?"><?= csrf_field() ?><button class="button subtle small" type="submit"><?= icon('trash') ?> Vyčistit historii</button></form><a class="button subtle small" href="<?= e(url('/settings')) ?>"><?= icon('settings') ?> Nastavení</a></div><?php endif; ?></header>
+    <div class="status-ribbon embedded <?= e($routerStatus) ?>">
+        <div class="status-ribbon-icon"><?= icon($routerStatus === 'online' ? 'check' : 'server') ?></div>
+        <div><strong><?= e($statusLabel) ?></strong><span><?= $router ? e(($router['identity'] ?: $router['name']) . ' · ' . $router['host'] . ':' . $router['port']) : 'Nastavte připojení k RouterOS API' ?></span></div>
+        <div class="status-ribbon-meta"><span>Poslední synchronizace</span><strong data-last-sync><?= e(format_datetime($router['last_sync_at'] ?? null)) ?></strong></div>
+    </div>
     <div class="job-list">
+        <?php if ($jobs === []): ?><div class="empty-state compact"><span><?= icon('check') ?></span><strong>Žádné čekající ani chybové změny</strong></div><?php endif; ?>
         <?php foreach ($jobs as $job): ?><div class="job-row"><span class="job-state <?= e($job['status']) ?>"><?= icon($job['status'] === 'failed' ? 'alert' : 'refresh') ?></span><div><strong><?= e($job['progress'] ?: $job['type']) ?></strong><small><?php if ($job['last_error']): ?><?= e($job['last_error']) ?> · <?= e(format_datetime($job['finished_at'] ?: $job['created_at'])) ?><?php else: ?><?= e(format_datetime($job['created_at'])) ?><?php endif; ?></small></div><span class="badge <?= e($job['status']) ?>"><?= e(['pending'=>'Čeká','running'=>'Probíhá','failed'=>'Chyba'][$job['status']] ?? $job['status']) ?></span></div><?php endforeach; ?>
     </div>
 </section>
-<?php endif; ?>

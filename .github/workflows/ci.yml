@@ -23,6 +23,7 @@ jobs:
           php tests/log_archive_flow_test.php
           php tests/schema_migration_test.php
           php tests/job_processor_compatibility_test.php
+          php tests/connection_event_parser_test.php
 
       - name: Shell syntaxe
         run: |

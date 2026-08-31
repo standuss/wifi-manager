@@ -66,6 +66,45 @@ final class Database
         $this->addColumn('admin_users', 'notify_monitoring_problem', 'INTEGER NOT NULL DEFAULT 0');
         $this->addColumn('devices', 'rate_down', "TEXT NOT NULL DEFAULT ''");
         $this->addColumn('devices', 'rate_up', "TEXT NOT NULL DEFAULT ''");
+        $this->addColumn('routers', 'capsman_types', "TEXT NOT NULL DEFAULT ''");
+        $this->addColumn('devices', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('wifi_networks', 'mikrotik_raw_id', 'TEXT');
+        $this->addColumn('wifi_networks', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('wifi_networks', 'hidden', 'INTEGER NOT NULL DEFAULT 0');
+        $this->addColumn('wifi_networks', 'desired_json', 'TEXT');
+        $this->addColumn('wifi_networks', 'remote_json', 'TEXT');
+        $this->addColumn('wifi_networks', 'conflict_summary', 'TEXT');
+        $this->addColumn('access_points', 'mikrotik_raw_id', 'TEXT');
+        $this->addColumn('access_points', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('wifi_radios_cache', 'mikrotik_raw_id', 'TEXT');
+        $this->addColumn('wifi_radios_cache', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('connected_clients', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('wifi_sessions', 'router_id', 'INTEGER REFERENCES routers(id) ON DELETE SET NULL');
+        $this->addColumn('wifi_sessions', 'capsman_type', "TEXT NOT NULL DEFAULT 'wifi'");
+        $this->addColumn('wifi_sessions', 'disconnect_reason', 'TEXT');
+        $this->addColumn('wifi_sessions', 'source', "TEXT NOT NULL DEFAULT 'api'");
+
+        // Before schema v6 only the new WiFi CAPsMAN was supported and cache
+        // identifiers had no namespace. Keep those rows (including desired
+        // state and encrypted passwords) while making room for legacy records
+        // that may use the same internal RouterOS identifiers.
+        $this->pdo->exec(
+            "UPDATE wifi_networks
+             SET mikrotik_raw_id = COALESCE(mikrotik_raw_id, mikrotik_id),
+                 mikrotik_id = 'wifi:' || mikrotik_id,
+                 capsman_type = 'wifi'
+             WHERE mikrotik_id NOT LIKE 'wifi:%' AND mikrotik_id NOT LIKE 'legacy:%'"
+        );
+        $this->pdo->exec(
+            "UPDATE access_points
+             SET mikrotik_id = 'wifi:' || mikrotik_id, capsman_type = 'wifi'
+             WHERE mikrotik_id NOT LIKE 'wifi:%' AND mikrotik_id NOT LIKE 'legacy:%'"
+        );
+        $this->pdo->exec(
+            "UPDATE wifi_radios_cache
+             SET mikrotik_id = 'wifi:' || mikrotik_id, capsman_type = 'wifi'
+             WHERE mikrotik_id NOT LIKE 'wifi:%' AND mikrotik_id NOT LIKE 'legacy:%'"
+        );
 
         // Existing clients must be considered known. Otherwise the first sync
         // after an update would send a misleading notification storm.
@@ -77,7 +116,7 @@ final class Database
             "INSERT OR IGNORE INTO discovered_devices (router_id, mac_address, hostname, ip_address, first_seen_at, last_seen_at)
              SELECT r.id, d.mac_address, d.name, d.current_ip, d.created_at, d.updated_at FROM routers r CROSS JOIN devices d"
         );
-        $this->pdo->exec("INSERT INTO schema_meta (key, value) VALUES ('version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+        $this->pdo->exec("INSERT INTO schema_meta (key, value) VALUES ('version', '6') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
     }
 
     private function addColumn(string $table, string $column, string $definition): void

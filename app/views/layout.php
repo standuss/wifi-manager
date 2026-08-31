@@ -6,6 +6,7 @@ $nav = [
     ['dashboard', '/', 'dashboard', 'Přehled'],
     ['clients', '/clients', 'devices', 'Připojená zařízení'],
     ['registrations', '/registrations', 'register', 'Registrace'],
+    ['devices', '/devices', 'devices', 'Registrovaná zařízení'],
     ['networks', '/networks', 'wifi', 'Wi‑Fi sítě'],
     ['access-points', '/access-points', 'radio', 'Přístupové body'],
 ];
@@ -62,7 +63,7 @@ $monitoringNav = [
 <div class="page-wrap">
     <header class="topbar">
         <button class="icon-button mobile-menu" type="button" data-sidebar-toggle aria-label="Otevřít menu"><?= icon('menu') ?></button>
-        <div><span class="eyebrow">WI‑FI INFRASTRUKTURA</span><h1><?= e($title ?? '') ?></h1></div>
+        <div><h1><?= e($title ?? '') ?></h1></div>
         <div class="topbar-actions">
             <span class="live-chip"><i></i> živá data</span>
             <span class="clock" data-clock></span>

@@ -30,12 +30,14 @@ final class RegistrationActionsController
         $repository = $this->routerFactory->repository($routerId);
         $snapshot = $repository->fastSnapshot();
         $mac = normalize_mac((string) $device['mac_address']);
+        $type = (string) ($device['capsman_type'] ?? 'wifi') === 'legacy' ? 'legacy' : 'wifi';
+        $accessMenu = $repository->menu($type, 'access-list');
         $approvedVlan = (int) $this->database->pdo()->query("SELECT value FROM app_settings WHERE key = 'approved_vlan_id'")->fetchColumn();
         $comment = $this->accessComment($device);
 
         $access = null;
         foreach ($snapshot['access_list'] ?? [] as $row) {
-            if ($this->rowMac($row) === $mac) {
+            if ((string) ($row['_capsman_type'] ?? 'wifi') === $type && $this->rowMac($row) === $mac) {
                 $access = $row;
                 break;
             }
@@ -48,19 +50,25 @@ final class RegistrationActionsController
                 'disabled' => 'no',
                 'comment' => $comment,
             ];
-            if (!$block) $values['vlan-id'] = $approvedVlan;
-            $repository->add('/interface/wifi/access-list', $values);
+            if (!$block) {
+                $values['vlan-id'] = $approvedVlan;
+                if ($type === 'legacy') $values['vlan-mode'] = 'use-tag';
+            }
+            $repository->add($accessMenu, $values);
         } else {
             $values = [
                 'action' => $block ? 'reject' : 'accept',
                 'disabled' => 'no',
                 'comment' => $comment,
             ];
-            if (!$block) $values['vlan-id'] = $approvedVlan;
-            $repository->set('/interface/wifi/access-list', (string) $access['.id'], $values);
+            if (!$block) {
+                $values['vlan-id'] = $approvedVlan;
+                if ($type === 'legacy') $values['vlan-mode'] = 'use-tag';
+            }
+            $repository->set($accessMenu, (string) $access['.id'], $values);
         }
 
-        if ($block) $this->disconnectMac($repository, $mac);
+        if ($block) $this->disconnectMac($repository, $mac, $type);
 
         $this->database->pdo()->prepare(
             "UPDATE devices SET registration_state = :state, updated_at = CURRENT_TIMESTAMP WHERE id = :id"
@@ -73,11 +81,12 @@ final class RegistrationActionsController
             ($block ? 'Zařízení bylo zakázáno: ' : 'Zařízení bylo povoleno: ') . $device['name'],
             'device',
             (int) $device['id'],
-            ['mac_address' => $mac],
+            ['mac_address' => $mac, 'capsman_type' => $type],
             request_ip(),
         );
         flash('success', $block ? 'Zařízení bylo zakázáno a aktuální spojení odpojeno.' : 'Zařízení bylo znovu povoleno.');
-        redirect('/registrations');
+        $returnTo = (string) ($_POST['return_to'] ?? '/devices');
+        redirect(in_array($returnTo, ['/clients', '/devices'], true) ? $returnTo : '/devices');
     }
 
     public function delete(): void
@@ -89,6 +98,8 @@ final class RegistrationActionsController
         $repository = $this->routerFactory->repository($routerId);
         $snapshot = $repository->fastSnapshot();
         $mac = normalize_mac((string) $device['mac_address']);
+        $type = (string) ($device['capsman_type'] ?? 'wifi') === 'legacy' ? 'legacy' : 'wifi';
+        $accessMenu = $repository->menu($type, 'access-list');
         $currentIp = trim((string) ($device['current_ip'] ?? ''));
         $storedAccess = (string) ($device['mikrotik_access_id'] ?? '');
         $storedLease = (string) ($device['mikrotik_lease_id'] ?? '');
@@ -97,8 +108,9 @@ final class RegistrationActionsController
 
         foreach ($snapshot['access_list'] ?? [] as $row) {
             if (!isset($row['.id'])) continue;
+            if ((string) ($row['_capsman_type'] ?? 'wifi') !== $type) continue;
             if ((string) $row['.id'] === $storedAccess || $this->rowMac($row) === $mac) {
-                $repository->remove('/interface/wifi/access-list', (string) $row['.id']);
+                $repository->remove($accessMenu, (string) $row['.id']);
             }
         }
         foreach ($snapshot['leases'] ?? [] as $row) {
@@ -120,7 +132,7 @@ final class RegistrationActionsController
                 $repository->remove('/queue/simple', (string) $row['.id']);
             }
         }
-        $this->disconnectMac($repository, $mac);
+        $this->disconnectMac($repository, $mac, $type);
 
         $this->database->transaction(function () use ($device, $routerId, $mac): void {
             $this->database->pdo()->prepare('DELETE FROM connected_clients WHERE router_id = :router_id AND mac_address = :mac')
@@ -141,11 +153,11 @@ final class RegistrationActionsController
             'Registrace zařízení byla odstraněna: ' . $device['name'],
             'device',
             (int) $device['id'],
-            ['mac_address' => $mac],
+            ['mac_address' => $mac, 'capsman_type' => $type],
             request_ip(),
         );
         flash('success', 'Zařízení bylo odstraněno z WiFi Manageru i z Access Listu, DHCP a Simple Queue.');
-        redirect('/registrations');
+        redirect('/devices');
     }
 
     /** @return array<string,mixed> */
@@ -182,17 +194,20 @@ final class RegistrationActionsController
 
     private function accessComment(array $device): string
     {
-        $person = trim((string) ($device['person_name'] ?? ''));
-        $name = trim((string) ($device['name'] ?? ''));
-        return $person !== '' ? 'WiFi Manager | ' . $person . ' | ' . $name : 'WiFi Manager | ' . $name;
+        $parts = array_values(array_filter([
+            'WiFi Manager', trim((string) ($device['person_name'] ?? '')),
+            trim((string) ($device['name'] ?? '')), trim((string) ($device['mac_address'] ?? '')),
+        ], static fn (string $value): bool => $value !== ''));
+        return mb_substr(implode(' | ', $parts), 0, 120);
     }
 
-    private function disconnectMac(object $repository, string $mac): void
+    private function disconnectMac(object $repository, string $mac, string $type): void
     {
-        foreach ($repository->rows('/interface/wifi/registration-table/print', ['.id', 'mac-address']) as $row) {
+        $menu = $repository->menu($type, 'registration-table');
+        foreach ($repository->rows($menu . '/print', ['.id', 'mac-address']) as $row) {
             if (!isset($row['.id']) || $this->rowMac($row) !== $mac) continue;
             try {
-                $repository->remove('/interface/wifi/registration-table', (string) $row['.id']);
+                $repository->remove($menu, (string) $row['.id']);
             } catch (\Throwable) {
                 // Klient se mohl odpojit sám mezi načtením tabulky a remove.
             }

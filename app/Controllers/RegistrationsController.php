@@ -28,16 +28,15 @@ final class RegistrationsController
     {
         $this->auth->requireLogin();
         $pending = $this->database->pdo()->query(
-            "SELECT * FROM connected_clients WHERE registration_status IN ('pending','incomplete') ORDER BY first_seen_at"
-        )->fetchAll();
-        $devices = $this->database->pdo()->query(
-            'SELECT d.*, p.name AS person_name, p.note AS person_note FROM devices d
-             LEFT JOIN people p ON p.id = d.person_id ORDER BY d.updated_at DESC'
+            "SELECT c.*, d.registration_state AS device_registration_state
+             FROM connected_clients c LEFT JOIN devices d ON d.id=c.device_id
+             WHERE c.registration_status='pending' OR d.registration_state='registering'
+             ORDER BY c.first_seen_at"
         )->fetchAll();
         $settings = $this->settings->all();
         $this->view->render('registrations', [
             'title' => 'Registrace zařízení', 'activeNav' => 'registrations', 'pending' => $pending,
-            'devices' => $devices, 'settings' => $settings, 'suggestedIp' => $this->nextFreeIp($settings),
+            'settings' => $settings, 'suggestedIp' => $this->nextFreeIp($settings),
         ]);
     }
 
@@ -66,6 +65,11 @@ final class RegistrationsController
         $routerId = (int) $this->database->pdo()->query('SELECT id FROM routers WHERE enabled = 1 ORDER BY id LIMIT 1')->fetchColumn();
         if ($routerId <= 0) throw new \RuntimeException('Nejprve nastavte připojení k MikroTiku.');
 
+        $clientStatement = $this->database->pdo()->prepare('SELECT capsman_type FROM connected_clients WHERE router_id = :router_id AND mac_address = :mac LIMIT 1');
+        $clientStatement->execute(['router_id' => $routerId, 'mac' => $mac]);
+        $capsmanType = (string) ($clientStatement->fetchColumn() ?: 'wifi');
+        $capsmanType = $capsmanType === 'legacy' ? 'legacy' : 'wifi';
+
         $existing = $this->database->pdo()->prepare("SELECT id FROM devices WHERE mac_address = :mac AND registration_state != 'archived'");
         $existing->execute(['mac' => $mac]);
         if ($existing->fetchColumn()) throw new \RuntimeException('Tato MAC adresa už je v evidenci.');
@@ -85,7 +89,7 @@ final class RegistrationsController
             }
         }
 
-        [$personId, $deviceId] = $this->database->transaction(function () use ($existingPersonId, $name, $note, $deviceName, $mac): array {
+        [$personId, $deviceId] = $this->database->transaction(function () use ($existingPersonId, $name, $note, $deviceName, $mac, $capsmanType): array {
             if ($existingPersonId === null) {
                 $person = $this->database->pdo()->prepare('INSERT INTO people (name, note) VALUES (:name, :note)');
                 $person->execute(['name' => $name, 'note' => $note !== '' ? $note : null]);
@@ -95,19 +99,24 @@ final class RegistrationsController
                 if ($note !== '') $this->database->pdo()->prepare('UPDATE people SET note = :note, updated_at = CURRENT_TIMESTAMP WHERE id = :id')->execute(['note' => $note, 'id' => $personId]);
             }
             $device = $this->database->pdo()->prepare(
-                "INSERT INTO devices (person_id, name, mac_address, registration_state) VALUES (:person_id, :name, :mac, 'registering')"
+                "INSERT INTO devices (person_id, name, mac_address, capsman_type, registration_state) VALUES (:person_id, :name, :mac, :capsman_type, 'registering')"
             );
-            $device->execute(['person_id' => $personId, 'name' => $deviceName, 'mac' => $mac]);
+            $device->execute(['person_id' => $personId, 'name' => $deviceName, 'mac' => $mac, 'capsman_type' => $capsmanType]);
             return [$personId, (int) $this->database->pdo()->lastInsertId()];
         });
+        $this->database->pdo()->prepare(
+            "UPDATE connected_clients SET device_id=:device_id,registration_status='incomplete' WHERE router_id=:router_id AND mac_address=:mac"
+        )->execute(['device_id' => $deviceId, 'router_id' => $routerId, 'mac' => $mac]);
 
         $user = $this->auth->user();
         $jobId = $this->jobs->enqueue($routerId, 'register_device', [
             'person_id' => $personId, 'device_id' => $deviceId, 'device_name' => $deviceName,
+            'person_name' => $name, 'note' => $note, 'capsman_type' => $capsmanType,
             'mac_address' => $mac, 'ip_address' => $ip, 'rate_down' => $rateDown, 'rate_up' => $rateUp,
         ], (int) $user['id']);
         $this->audit->log((int) $user['id'], 'device.register.requested', 'Registrace zařízení byla zařazena', 'device', $deviceId, [
-            'mac_address' => $mac, 'ip_address' => $ip, 'job_id' => $jobId,
+            'mac_address' => $mac, 'ip_address' => $ip, 'capsman_type' => $capsmanType,
+            'private_mac' => is_private_mac($mac), 'job_id' => $jobId,
         ], request_ip());
         flash('success', 'Registrace byla zařazena. Stav se bude průběžně aktualizovat.');
         redirect('/registrations');
@@ -175,6 +184,7 @@ final class RegistrationsController
             'person_name' => $personName,
             'note' => $note,
             'mac_address' => (string) $device['mac_address'],
+            'capsman_type' => (string) ($device['capsman_type'] ?? 'wifi'),
             'ip_address' => $ip,
             'rate_down' => $rateDown,
             'rate_up' => $rateUp,
@@ -183,7 +193,7 @@ final class RegistrationsController
             'device_name' => $deviceName, 'ip_address' => $ip, 'rate_down' => $rateDown, 'rate_up' => $rateUp, 'job_id' => $jobId,
         ], request_ip());
         flash('success', 'Úprava zařízení byla předána workeru. Po dokončení se změní MikroTik i evidence.');
-        redirect('/registrations');
+        redirect('/devices');
     }
 
     /** @param array<string,string> $settings */

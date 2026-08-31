@@ -34,6 +34,17 @@ final class LogArchiveService
             $decoded = json_decode((string) file_get_contents($statusPath), true);
             $archive = is_array($decoded) ? $decoded : [];
         }
+        $settings = [];
+        foreach ($this->database->pdo()->query("SELECT key,value FROM app_settings WHERE key IN ('monitor_syslog_tcp_port','monitor_syslog_udp_port','monitor_netflow_port')")->fetchAll() as $row) {
+            $settings[(string) $row['key']] = (int) $row['value'];
+        }
+        $syslogTcp = $this->listener('tcp', (int) ($settings['monitor_syslog_tcp_port'] ?? 5514), 'rsyslogd');
+        $syslogUdp = $this->listener('udp', (int) ($settings['monitor_syslog_udp_port'] ?? 514), 'rsyslogd');
+        $netflowListener = $this->listener('udp', (int) ($settings['monitor_netflow_port'] ?? 2055), 'nfcapd');
+        $conflictingUnits = [];
+        foreach (['nfdump@default.service', 'nfdump.service', 'nprobe@none.service', 'nprobe.service'] as $unit) {
+            if ($this->serviceState($unit) === 'active') $conflictingUnits[] = $unit;
+        }
 
         return [
             'syslog' => [
@@ -42,6 +53,8 @@ final class LogArchiveService
                 'bytes' => isset($archive['syslog_bytes']) ? (int) $archive['syslog_bytes'] : null,
                 'newest_at' => $archive['syslog_newest_at'] ?? $this->newestSyslogTimestamp($syslogDir),
                 'service' => $this->serviceState('rsyslog.service'),
+                'listeners' => ['tcp' => $syslogTcp, 'udp' => $syslogUdp],
+                'conflict' => $syslogTcp['conflict'] || $syslogUdp['conflict'],
             ],
             'netflow' => [
                 'directory' => $netflowDir,
@@ -50,6 +63,9 @@ final class LogArchiveService
                 'newest_at' => $archive['netflow_newest_at'] ?? $this->newestFlowTimestamp($netflowDir),
                 'service' => $this->serviceState('wifimanager-nfcapd.service'),
                 'nfdump' => is_executable($nfdump),
+                'listener' => $netflowListener,
+                'conflict' => $netflowListener['conflict'] || $conflictingUnits !== [],
+                'conflicting_units' => $conflictingUnits,
             ],
             'retention' => [
                 'last_run_at' => $archive['generated_at'] ?? null,
@@ -368,6 +384,26 @@ final class LogArchiveService
         } catch (\Throwable) {
             return 'unknown';
         }
+    }
+
+    /** @return array{port:int,listening:bool,owner:string,conflict:bool} */
+    private function listener(string $protocol, int $port, string $expectedOwner): array
+    {
+        $listening = false;
+        $owner = '';
+        try {
+            $output = $this->run(['/usr/bin/ss', '-H', $protocol === 'tcp' ? '-lntp' : '-lnup'], 2);
+            foreach (preg_split('/\R/', trim($output)) ?: [] as $line) {
+                if (preg_match('/(?:\]|\*|[0-9a-f:.]):' . preg_quote((string) $port, '/') . '\s/i', $line) !== 1) continue;
+                $listening = true;
+                if (preg_match('/users:\(\(\"([^\"]+)/', $line, $match) === 1) $owner = (string) $match[1];
+                break;
+            }
+        } catch (\Throwable) {
+            // Diagnostika zůstane v neurčeném stavu na systémech bez ss.
+        }
+        $conflict = $listening && $owner !== '' && !str_contains(mb_strtolower($owner), mb_strtolower($expectedOwner));
+        return compact('port', 'listening', 'owner', 'conflict');
     }
 
     private function newestSyslogTimestamp(string $base): ?string

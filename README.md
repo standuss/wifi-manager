@@ -1,6 +1,6 @@
 # WiFi Manager
 
-Česká webová administrace pro RouterOS 7 WiFi CAPsMAN (`/interface/wifi`). Spravuje přístupové body, klienty, registrace zařízení, Wi‑Fi sítě, dlouhodobý syslog/CEF a IPFIX. Je určená pro opakované instalace u různých zákazníků.
+Česká webová administrace pro RouterOS 7. Podporuje nový WiFi CAPsMAN (`/interface/wifi`) i starý CAPsMAN (`/caps-man`), včetně jejich souběhu na jednom routeru. Spravuje přístupové body, klienty, registrace zařízení, Wi‑Fi sítě, dlouhodobý syslog/CEF a IPFIX. Je určená pro opakované instalace u různých zákazníků.
 
 Repozitář neobsahuje žádná hesla, databáze ani údaje konkrétního zákazníka. Každá instalace si vytvoří vlastní šifrovací klíč a lokální konfiguraci.
 
@@ -55,11 +55,15 @@ Port `8728` není šifrovaný. Nikdy jej nepovolujte z internetu ani z nedůvěr
 
 - role administrátor a pouze prohlížení;
 - SQLite v režimu WAL a šifrované uložení přístupových údajů pomocí Sodium;
-- automatická synchronizace klientů, DHCP lease, Access List, Simple Queues, Wi‑Fi konfigurací a CAPů;
-- registrace zařízení jednou operací včetně VLAN, statického DHCP a rychlostního omezení;
-- vytváření, zapínání a vypínání Wi‑Fi sítí pro 2,4/5 GHz;
+- automatická synchronizace klientů, DHCP lease, Access List, Simple Queues, Wi‑Fi konfigurací a CAPů pro oba typy CAPsMANu;
+- registrace zařízení jednou transakční operací včetně VLAN, statického DHCP a rychlostního omezení; při chybě se síťové změny vrátí;
+- samostatná evidence registrovaných zařízení, historie připojení/odpojení a provozní data podle historické IP;
+- vytváření, zapínání, vypínání a skrývání Wi‑Fi sítí pro 2,4/5 GHz;
+- detekce rozdílu mezi požadovanou konfigurací a stavem MikroTiku s řízeným vyřešením konfliktu;
+- aplikování změn na jednotlivý přístupový bod pomocí reprovisioningu;
 - zobrazení Wi‑Fi hesla oprávněnému administrátorovi s auditním záznamem;
 - dlouhodobý syslog/CEF archiv v denních JSONL souborech;
+- syslogová historie připojení, odpojení a roamingu s API registrační tabulkou jako záložním zdrojem;
 - příjem a vyhledávání IPFIX pomocí `nfcapd` a `nfdump`;
 - vazba historické IP adresy na zařízení a držitele;
 - automatické nastavení CEF/syslogu a IPFIX přímo na MikroTiku, včetně oddělené NAT adresy a portů;
@@ -101,7 +105,7 @@ Správce projektu změní `VERSION` a odešle změny do větve `main`:
 
 ```bash
 git add .
-git commit -m "Release 0.3.6"
+git commit -m "Release 0.4.0"
 git push origin main
 ```
 

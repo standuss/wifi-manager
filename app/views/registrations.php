@@ -1,6 +1,6 @@
 <section class="page-intro">
     <div><p>Schválení zařízení vytvoří Access List, statický DHCP lease a omezení rychlosti.</p></div>
-    <div class="summary-chip orange"><?= icon('register') ?><span><strong><?= count($pending) ?></strong> čeká na registraci</span></div>
+    <div class="summary-chip orange"><?= icon('register') ?><span><strong><?= count($pending) ?></strong> čeká nebo se zapisuje</span></div>
 </section>
 
 <div class="two-column-layout">
@@ -11,9 +11,9 @@
     <?php foreach ($pending as $client): ?>
         <article class="pending-card">
             <span class="device-avatar pending large"><?= icon('devices') ?></span>
-            <div class="pending-main"><strong><?= e($client['hostname'] ?: 'Neznámé zařízení') ?></strong><span class="mono"><?= e($client['mac_address']) ?></span><small><?= e($client['ssid']) ?> · <?= e($client['access_point_name'] ?: 'CAP nezjištěn') ?></small></div>
+            <div class="pending-main"><strong><?= e($client['hostname'] ?: 'Neznámé zařízení') ?></strong><span class="mono"><?= e($client['mac_address']) ?></span><small><?= e($client['ssid']) ?> · <?= e($client['access_point_name'] ?: 'CAP nezjištěn') ?></small><?php if (is_private_mac((string) $client['mac_address'])): ?><span class="private-mac-warning"><?= icon('alert') ?> Soukromá náhodná MAC</span><?php endif; ?></div>
             <div class="pending-signal"><span class="signal-value <?= e(signal_class(isset($client['signal_dbm']) ? (int)$client['signal_dbm'] : null)) ?>"><?= e($client['signal_dbm'] ?? '—') ?> dBm</span><small><?= e($client['ip_address'] ?: 'Bez IP') ?></small></div>
-            <?php if ($auth->isAdmin()): ?><button class="button primary" type="button" data-open-register data-mac="<?= e($client['mac_address']) ?>" data-device="<?= e($client['hostname'] ?: 'Telefon') ?>">Registrovat</button><?php endif; ?>
+            <?php if (($client['device_registration_state'] ?? '') === 'registering'): ?><span class="badge running"><i></i>Zapisuje se</span><?php elseif ($auth->isAdmin()): ?><button class="button primary" type="button" data-open-register data-mac="<?= e($client['mac_address']) ?>" data-device="<?= e($client['hostname'] ?: 'Telefon') ?>" data-private-mac="<?= is_private_mac((string) $client['mac_address']) ? '1' : '0' ?>">Registrovat</button><?php endif; ?>
         </article>
     <?php endforeach; ?>
     </div>
@@ -32,19 +32,6 @@
 </aside>
 </div>
 
-<?php $activeDevices = array_values(array_filter($devices, static fn (array $device): bool => ($device['registration_state'] ?? '') !== 'archived')); ?>
-<section class="panel compact-panel">
-    <header class="panel-header"><div><span class="panel-kicker">EVIDENCE</span><h2>Registrovaná a rozpracovaná zařízení</h2></div><div class="search-box"><?= icon('search') ?><input type="search" placeholder="Hledat" data-table-search="registered-table"></div></header>
-    <div class="table-wrap"><table class="data-table" id="registered-table"><thead><tr><th>Držitel</th><th>Zařízení</th><th>MAC adresa</th><th>Statická IP</th><th>Rychlost ↓ / ↑</th><th>Stav</th><th>Registrováno</th><th></th></tr></thead><tbody>
-    <?php if ($activeDevices === []): ?><tr class="empty-row"><td colspan="8"><strong>Zatím není evidované žádné zařízení</strong></td></tr><?php endif; ?>
-    <?php foreach ($activeDevices as $device):
-        $rateDown = $device['rate_down'] ?: $settings['default_rate_down'];
-        $rateUp = $device['rate_up'] ?: $settings['default_rate_up'];
-        $blocked = ($device['registration_state'] ?? '') === 'blocked';
-    ?><tr data-search-row><td><strong><?= e($device['person_name'] ?: '—') ?></strong><small class="subline"><?= e($device['person_note'] ?: '') ?></small></td><td><?= e($device['name']) ?></td><td class="mono"><?= e($device['mac_address']) ?></td><td class="mono"><?= e($device['current_ip'] ?: '—') ?></td><td><?= e($rateDown) ?> / <?= e($rateUp) ?></td><td><span class="badge <?= e($device['registration_state']) ?>"><i></i><?= e(['registered'=>'Registrovaný','registering'=>'Zapisuje se','pending'=>'Čeká','incomplete'=>'Neúplný','blocked'=>'Zakázaný'][$device['registration_state']] ?? $device['registration_state']) ?></span></td><td><?= e(format_datetime($device['registered_at'])) ?></td><td><?php if ($auth->isAdmin()): ?><div class="table-actions"><button class="button subtle small" type="button" data-edit-device data-id="<?= (int) $device['id'] ?>" data-person="<?= e($device['person_name'] ?: '') ?>" data-note="<?= e($device['person_note'] ?: '') ?>" data-device="<?= e($device['name']) ?>" data-mac="<?= e($device['mac_address']) ?>" data-ip="<?= e($device['current_ip'] ?: '') ?>" data-rate-down="<?= e($rateDown) ?>" data-rate-up="<?= e($rateUp) ?>"><?= icon('edit') ?> Upravit</button><form method="post" action="<?= e(url('/registrations/toggle')) ?>" data-confirm="Opravdu chcete <?= $blocked ? 'povolit' : 'zakázat' ?> zařízení <?= e($device['name']) ?>?"><?= csrf_field() ?><input type="hidden" name="device_id" value="<?= (int)$device['id'] ?>"><button class="button subtle small" type="submit"><?= icon($blocked ? 'check' : 'close') ?> <?= $blocked ? 'Povolit' : 'Zakázat' ?></button></form><form method="post" action="<?= e(url('/registrations/delete')) ?>" data-confirm="Opravdu smazat registraci <?= e($device['name']) ?>? Odstraní se Access List, statický DHCP lease a Simple Queue."><?= csrf_field() ?><input type="hidden" name="device_id" value="<?= (int)$device['id'] ?>"><button class="button danger small" type="submit"><?= icon('trash') ?> Smazat</button></form></div><?php endif; ?></td></tr><?php endforeach; ?>
-    </tbody></table></div>
-</section>
-
 <?php if ($auth->isAdmin()): ?>
 <dialog class="modal" id="register-dialog">
     <form method="post" action="<?= e(url('/registrations')) ?>" class="modal-card">
@@ -58,26 +45,10 @@
             <label><span>Statická IP</span><input name="ip_address" required value="<?= e($suggestedIp) ?>" class="mono"></label>
             <label><span>Rychlost ↓ / ↑</span><div class="split-input"><input name="rate_down" value="<?= e($settings['default_rate_down']) ?>" required><input name="rate_up" value="<?= e($settings['default_rate_up']) ?>" required></div></label>
         </div>
+        <div class="private-mac-notice" data-private-mac-notice hidden><?= icon('alert') ?><span><strong>Zařízení používá soukromou MAC adresu.</strong> Pokud si vytvoří novou náhodnou MAC, bude potřeba registraci zopakovat.</span></div>
         <div class="operation-preview"><span><?= icon('check') ?> Access List</span><span><?= icon('check') ?> VLAN <?= e($settings['approved_vlan_id']) ?></span><span><?= icon('check') ?> Statický DHCP</span><span><?= icon('check') ?> Simple Queue</span></div>
         <footer><button type="button" class="button subtle" data-close-dialog>Zrušit</button><button type="submit" class="button primary">Schválit a registrovat <?= icon('check') ?></button></footer>
     </form>
 </dialog>
 
-<dialog class="modal" id="device-edit-dialog">
-    <form method="post" action="<?= e(url('/registrations/update')) ?>" class="modal-card">
-        <?= csrf_field() ?>
-        <input type="hidden" name="device_id" data-edit-id>
-        <header><div><span class="modal-icon"><?= icon('edit') ?></span><h2>Upravit zařízení</h2><p>Změny se ověří a zapíší do Access Listu, DHCP i Simple Queue.</p></div><button type="button" class="icon-button" data-close-dialog aria-label="Zavřít"><?= icon('close') ?></button></header>
-        <div class="form-grid">
-            <label class="span-2"><span>Jméno držitele</span><input name="person_name" required maxlength="120" data-edit-person></label>
-            <label class="span-2"><span>Poznámka <em>volitelné</em></span><input name="note" maxlength="250" data-edit-note></label>
-            <label><span>Název zařízení</span><input name="device_name" required maxlength="120" data-edit-name></label>
-            <label><span>MAC adresa</span><input readonly class="mono" data-edit-mac></label>
-            <label><span>Statická IP</span><input name="ip_address" required class="mono" data-edit-ip></label>
-            <label><span>Rychlost ↓ / ↑</span><div class="split-input"><input name="rate_down" required data-edit-rate-down><input name="rate_up" required data-edit-rate-up></div></label>
-        </div>
-        <div class="operation-preview"><span><?= icon('check') ?> Přejmenování</span><span><?= icon('check') ?> Statická IP</span><span><?= icon('check') ?> Rychlost</span><span><?= icon('check') ?> Držitel</span></div>
-        <footer><button type="button" class="button subtle" data-close-dialog>Zrušit</button><button type="submit" class="button primary">Uložit do MikroTiku <?= icon('check') ?></button></footer>
-    </form>
-</dialog>
 <?php endif; ?>

@@ -34,6 +34,8 @@
         if (!dialog) return;
         q('[data-register-mac]', dialog).value = button.dataset.mac || '';
         q('[data-register-device]', dialog).value = button.dataset.device || 'Telefon';
+        const privateNotice = q('[data-private-mac-notice]', dialog);
+        if (privateNotice) privateNotice.hidden = button.dataset.privateMac !== '1';
         dialog.showModal();
         q('input[name="person_name"]', dialog)?.focus();
     }));

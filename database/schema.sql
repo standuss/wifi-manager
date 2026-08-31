@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 );
 
-INSERT INTO schema_meta (key, value) VALUES ('version', '5')
+INSERT INTO schema_meta (key, value) VALUES ('version', '6')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS routers (
     status TEXT NOT NULL DEFAULT 'unconfigured' CHECK (status IN ('unconfigured', 'online', 'offline', 'error')),
     last_sync_at TEXT,
     last_error TEXT,
+    capsman_types TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -132,6 +133,7 @@ CREATE TABLE IF NOT EXISTS devices (
     mikrotik_access_id TEXT,
     mikrotik_lease_id TEXT,
     mikrotik_queue_id TEXT,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     registered_at TEXT,
     archived_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -155,6 +157,8 @@ CREATE TABLE IF NOT EXISTS wifi_networks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
     mikrotik_id TEXT NOT NULL,
+    mikrotik_raw_id TEXT,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     config_name TEXT NOT NULL,
     ssid TEXT NOT NULL,
     band TEXT,
@@ -163,8 +167,12 @@ CREATE TABLE IF NOT EXISTS wifi_networks (
     registration_vlan_id INTEGER,
     password_cipher TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    hidden INTEGER NOT NULL DEFAULT 0,
     managed INTEGER NOT NULL DEFAULT 0,
     source_hash TEXT,
+    desired_json TEXT,
+    remote_json TEXT,
+    conflict_summary TEXT,
     sync_state TEXT NOT NULL DEFAULT 'synced' CHECK (sync_state IN ('synced', 'changed', 'error')),
     last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -177,6 +185,8 @@ CREATE TABLE IF NOT EXISTS access_points (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
     mikrotik_id TEXT NOT NULL,
+    mikrotik_raw_id TEXT,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     name TEXT NOT NULL,
     custom_name TEXT,
     address TEXT,
@@ -197,6 +207,8 @@ CREATE TABLE IF NOT EXISTS wifi_radios_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
     mikrotik_id TEXT NOT NULL,
+    mikrotik_raw_id TEXT,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     cap_identity TEXT,
     cap_base_mac TEXT,
     interface_name TEXT,
@@ -213,6 +225,7 @@ CREATE TABLE IF NOT EXISTS connected_clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
     device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     mac_address TEXT NOT NULL,
     ip_address TEXT,
     hostname TEXT,
@@ -302,18 +315,49 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_leases_mac ON dhcp_leases_cache(mac_address)
 
 CREATE TABLE IF NOT EXISTS wifi_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    router_id INTEGER REFERENCES routers(id) ON DELETE SET NULL,
     device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
     mac_address TEXT NOT NULL,
     ip_address TEXT,
     ssid TEXT,
     access_point_name TEXT,
     connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     disconnected_at TEXT,
+    disconnect_reason TEXT,
+    source TEXT NOT NULL DEFAULT 'api',
     signal_min INTEGER,
     signal_max INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_wifi_sessions_mac_time ON wifi_sessions(mac_address, connected_at, disconnected_at);
+
+CREATE TABLE IF NOT EXISTS wifi_connection_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    router_id INTEGER REFERENCES routers(id) ON DELETE SET NULL,
+    device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL,
+    capsman_type TEXT NOT NULL DEFAULT 'wifi',
+    mac_address TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('connected', 'disconnected', 'roamed')),
+    occurred_at TEXT NOT NULL,
+    ssid TEXT,
+    interface_name TEXT,
+    access_point_name TEXT,
+    reason TEXT,
+    source TEXT NOT NULL DEFAULT 'api',
+    raw_message TEXT,
+    event_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wifi_connection_events_device_time ON wifi_connection_events(device_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wifi_connection_events_mac_time ON wifi_connection_events(mac_address, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS syslog_ingest_state (
+    path TEXT PRIMARY KEY,
+    byte_offset INTEGER NOT NULL DEFAULT 0,
+    file_inode TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS sync_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

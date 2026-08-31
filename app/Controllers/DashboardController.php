@@ -6,11 +6,13 @@ namespace WifiManager\Controllers;
 
 use WifiManager\Auth;
 use WifiManager\Database;
+use WifiManager\Csrf;
+use WifiManager\Services\AuditService;
 use WifiManager\View;
 
 final class DashboardController
 {
-    public function __construct(private readonly Database $database, private readonly Auth $auth, private readonly View $view)
+    public function __construct(private readonly Database $database, private readonly Auth $auth, private readonly View $view, private readonly AuditService $audit)
     {
     }
 
@@ -35,7 +37,7 @@ final class DashboardController
              LIMIT 12'
         )->fetchAll();
         $jobs = $pdo->query(
-            "SELECT id, type, status, progress, last_error, created_at FROM sync_jobs WHERE status IN ('pending','running','failed') ORDER BY id DESC LIMIT 6"
+            "SELECT id, type, status, progress, last_error, created_at, finished_at FROM sync_jobs WHERE status IN ('pending','running','failed') ORDER BY id DESC LIMIT 10"
         )->fetchAll();
 
         $this->view->render('dashboard', compact('router', 'stats', 'clients', 'jobs') + [
@@ -64,5 +66,17 @@ final class DashboardController
             'generated_at' => gmdate(DATE_ATOM),
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
-}
 
+    public function clearJobs(): void
+    {
+        $this->auth->requireAdmin();
+        Csrf::enforce();
+        $statement = $this->database->pdo()->prepare("DELETE FROM sync_jobs WHERE status IN ('done','failed')");
+        $statement->execute();
+        $count = $statement->rowCount();
+        $user = $this->auth->user();
+        $this->audit->log((int) $user['id'], 'jobs.history.cleared', 'Historie synchronizace byla vyčištěna', 'sync_job', null, ['deleted' => $count], request_ip());
+        flash('success', $count > 0 ? 'Historie synchronizace byla vyčištěna.' : 'V historii nebyly žádné dokončené ani chybové záznamy.');
+        redirect('/');
+    }
+}

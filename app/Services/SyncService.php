@@ -34,22 +34,22 @@ final class SyncService
                 $warnings = $snapshot['warnings'] ?? [];
                 if ($full) {
                     $this->syncRouter($pdo, $routerId, $snapshot, $now);
-                    if (!self::sectionFailed($warnings, 'interface/wifi/configuration/print')) {
+                    if (!self::capsmanSectionFailed($warnings, 'configuration')) {
                         $this->syncNetworks($pdo, $routerId, $snapshot['networks'] ?? [], $settings, $now);
                     }
-                    if (!self::sectionFailed($warnings, 'interface/wifi/capsman/remote-cap/print')) {
+                    if (!self::capsmanSectionFailed($warnings, 'remote-cap')) {
                         $this->syncAccessPoints($pdo, $routerId, $snapshot['caps'] ?? [], $now);
                     }
-                    if (!self::sectionFailed($warnings, 'interface/wifi/radio/print')) {
+                    if (!self::capsmanSectionFailed($warnings, 'radio')) {
                         $this->syncRadios($pdo, $routerId, $snapshot['radios'] ?? [], $now);
                     }
                 }
                 if (!self::sectionFailed($warnings, 'ip/dhcp-server/lease/print')) {
                     $this->syncLeases($pdo, $routerId, $snapshot['leases'] ?? [], $now);
                 }
-                $criticalClientReadFailed = self::sectionFailed($warnings, 'interface/wifi/registration-table/print')
+                $criticalClientReadFailed = self::sectionFailed($warnings, 'capsman/registration-table/print')
                     || self::sectionFailed($warnings, 'ip/dhcp-server/lease/print')
-                    || self::sectionFailed($warnings, 'interface/wifi/access-list/print')
+                    || self::sectionFailed($warnings, 'capsman/access-list/print')
                     || self::sectionFailed($warnings, 'queue/simple/print');
                 if (!$criticalClientReadFailed) {
                     $this->syncClients($pdo, $routerId, $snapshot, $settings, $now);
@@ -110,12 +110,14 @@ final class SyncService
         $identity = $snapshot['identity'] ?? [];
         $resource = $snapshot['resource'] ?? [];
         $statement = $pdo->prepare(
-            'UPDATE routers SET identity = :identity, model = :model, routeros_version = :version, updated_at = :now WHERE id = :id'
+            'UPDATE routers SET identity = :identity, model = :model, routeros_version = :version,
+             capsman_types = :capsman_types, updated_at = :now WHERE id = :id'
         );
         $statement->execute([
             'identity' => $identity['name'] ?? null,
             'model' => $resource['board-name'] ?? null,
             'version' => $resource['version'] ?? null,
+            'capsman_types' => implode(',', $snapshot['capsman_types'] ?? []),
             'now' => $now,
             'id' => $routerId,
         ]);
@@ -127,35 +129,65 @@ final class SyncService
         $seen = [];
         $statement = $pdo->prepare(
             'INSERT INTO wifi_networks
-             (router_id, mikrotik_id, config_name, ssid, band, vlan_id, registration_enabled, registration_vlan_id, password_cipher, enabled, source_hash, last_seen_at, updated_at)
-             VALUES (:router_id, :mikrotik_id, :config_name, :ssid, :band, :vlan_id, :registration_enabled, :registration_vlan_id, :password_cipher, :enabled, :source_hash, :last_seen_at, :updated_at)
+             (router_id, mikrotik_id, mikrotik_raw_id, capsman_type, config_name, ssid, band, vlan_id,
+              registration_enabled, registration_vlan_id, password_cipher, enabled, hidden, source_hash,
+              remote_json, conflict_summary, sync_state, last_seen_at, updated_at)
+             VALUES (:router_id, :mikrotik_id, :mikrotik_raw_id, :capsman_type, :config_name, :ssid, :band, :vlan_id,
+              :registration_enabled, :registration_vlan_id, :password_cipher, :enabled, :hidden, :source_hash,
+              :remote_json, :conflict_summary, :sync_state, :last_seen_at, :updated_at)
              ON CONFLICT(router_id, mikrotik_id) DO UPDATE SET
+             mikrotik_raw_id = excluded.mikrotik_raw_id, capsman_type = excluded.capsman_type,
              config_name = excluded.config_name, ssid = excluded.ssid, band = excluded.band, vlan_id = excluded.vlan_id,
              registration_enabled = excluded.registration_enabled, registration_vlan_id = excluded.registration_vlan_id,
              password_cipher = CASE WHEN excluded.password_cipher <> \'\' THEN excluded.password_cipher ELSE wifi_networks.password_cipher END,
-             enabled = excluded.enabled, source_hash = excluded.source_hash, last_seen_at = excluded.last_seen_at, updated_at = excluded.updated_at'
+             enabled = excluded.enabled, hidden = excluded.hidden, source_hash = excluded.source_hash,
+             remote_json = excluded.remote_json, conflict_summary = excluded.conflict_summary,
+             sync_state = excluded.sync_state, last_seen_at = excluded.last_seen_at, updated_at = excluded.updated_at'
         );
 
+        $existingStatement = $pdo->prepare('SELECT managed, desired_json FROM wifi_networks WHERE router_id = :router_id AND mikrotik_id = :mikrotik_id');
+
         foreach ($networks as $network) {
-            $id = (string) ($network['.id'] ?? '');
-            if ($id === '') continue;
+            $rawId = (string) ($network['.id'] ?? '');
+            if ($rawId === '') continue;
+            $type = self::capsmanType((string) ($network['_capsman_type'] ?? 'wifi'));
+            $id = $type . ':' . $rawId;
             $seen[] = $id;
             $vlan = isset($network['datapath.vlan-id']) && $network['datapath.vlan-id'] !== '' ? (int) $network['datapath.vlan-id'] : null;
             $registrationEnabled = $vlan !== null && $vlan === (int) ($settings['registration_vlan_id'] ?? 0);
             $passphrase = (string) ($network['security.passphrase'] ?? '');
-            $hash = hash('sha256', json_encode($network, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $remote = self::networkCanonical($network, $type);
+            $remoteJson = json_encode($remote, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            $hash = hash('sha256', $remoteJson);
+            $existingStatement->execute(['router_id' => $routerId, 'mikrotik_id' => $id]);
+            $existing = $existingStatement->fetch();
+            $conflicts = [];
+            if (is_array($existing) && (int) ($existing['managed'] ?? 0) === 1 && (string) ($existing['desired_json'] ?? '') !== '') {
+                $desired = json_decode((string) $existing['desired_json'], true);
+                if (is_array($desired)) {
+                    foreach ($desired as $key => $value) {
+                        if (array_key_exists($key, $remote) && $remote[$key] !== $value) $conflicts[] = self::networkFieldLabel((string) $key);
+                    }
+                }
+            }
             $statement->execute([
                 'router_id' => $routerId,
                 'mikrotik_id' => $id,
+                'mikrotik_raw_id' => $rawId,
+                'capsman_type' => $type,
                 'config_name' => $network['name'] ?? $id,
                 'ssid' => $network['ssid'] ?? $network['name'] ?? 'Bez názvu',
-                'band' => $network['channel.band'] ?? null,
+                'band' => $network['channel.band'] ?? $network['channel'] ?? null,
                 'vlan_id' => $vlan,
                 'registration_enabled' => $registrationEnabled ? 1 : 0,
                 'registration_vlan_id' => $registrationEnabled ? $vlan : null,
                 'password_cipher' => $passphrase !== '' ? $this->crypto->encrypt($passphrase) : '',
                 'enabled' => self::yes($network['disabled'] ?? 'no') ? 0 : 1,
+                'hidden' => self::yes($network['hide-ssid'] ?? 'no') ? 1 : 0,
                 'source_hash' => $hash,
+                'remote_json' => $remoteJson,
+                'conflict_summary' => $conflicts !== [] ? implode(', ', array_unique($conflicts)) : null,
+                'sync_state' => $conflicts !== [] ? 'changed' : 'synced',
                 'last_seen_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -174,20 +206,26 @@ final class SyncService
         $seen = [];
         $statement = $pdo->prepare(
             'INSERT INTO access_points
-             (router_id, mikrotik_id, name, address, board_name, serial, routeros_version, base_mac, status, connected_time, uptime, last_seen_at, updated_at)
-             VALUES (:router_id, :mikrotik_id, :name, :address, :board_name, :serial, :version, :base_mac, :status, :connected_time, :uptime, :last_seen_at, :updated_at)
+             (router_id, mikrotik_id, mikrotik_raw_id, capsman_type, name, address, board_name, serial, routeros_version, base_mac, status, connected_time, uptime, last_seen_at, updated_at)
+             VALUES (:router_id, :mikrotik_id, :mikrotik_raw_id, :capsman_type, :name, :address, :board_name, :serial, :version, :base_mac, :status, :connected_time, :uptime, :last_seen_at, :updated_at)
              ON CONFLICT(router_id, mikrotik_id) DO UPDATE SET
+             mikrotik_raw_id = excluded.mikrotik_raw_id, capsman_type = excluded.capsman_type,
              name = excluded.name, address = excluded.address, board_name = excluded.board_name, serial = excluded.serial,
              routeros_version = excluded.routeros_version, base_mac = excluded.base_mac, status = excluded.status, connected_time = excluded.connected_time,
              uptime = excluded.uptime, last_seen_at = excluded.last_seen_at, updated_at = excluded.updated_at'
         );
         foreach ($caps as $cap) {
-            $id = (string) ($cap['base-mac'] ?? $cap['identity'] ?? $cap['.id'] ?? '');
-            if ($id === '') continue;
+            $rawId = (string) ($cap['.id'] ?? '');
+            if ($rawId === '') continue;
+            $type = self::capsmanType((string) ($cap['_capsman_type'] ?? 'wifi'));
+            $stableId = (string) ($cap['base-mac'] ?? $cap['identity'] ?? $rawId);
+            $id = $type . ':' . $stableId;
             $seen[] = $id;
             $statement->execute([
                 'router_id' => $routerId,
                 'mikrotik_id' => $id,
+                'mikrotik_raw_id' => $rawId,
+                'capsman_type' => $type,
                 'name' => $cap['identity'] ?? $cap['common-name'] ?? $id,
                 'address' => $cap['address'] ?? null,
                 'board_name' => $cap['board-name'] ?? null,
@@ -223,22 +261,28 @@ final class SyncService
         $seen = [];
         $statement = $pdo->prepare(
             'INSERT INTO wifi_radios_cache
-             (router_id, mikrotik_id, cap_identity, cap_base_mac, interface_name, radio_mac, bands, hw_type, max_peers, last_seen_at)
-             VALUES (:router_id, :mikrotik_id, :cap_identity, :cap_base_mac, :interface_name, :radio_mac, :bands, :hw_type, :max_peers, :last_seen_at)
+             (router_id, mikrotik_id, mikrotik_raw_id, capsman_type, cap_identity, cap_base_mac, interface_name, radio_mac, bands, hw_type, max_peers, last_seen_at)
+             VALUES (:router_id, :mikrotik_id, :mikrotik_raw_id, :capsman_type, :cap_identity, :cap_base_mac, :interface_name, :radio_mac, :bands, :hw_type, :max_peers, :last_seen_at)
              ON CONFLICT(router_id, mikrotik_id) DO UPDATE SET
+             mikrotik_raw_id = excluded.mikrotik_raw_id, capsman_type = excluded.capsman_type,
              cap_identity = excluded.cap_identity, cap_base_mac = excluded.cap_base_mac, interface_name = excluded.interface_name,
              radio_mac = excluded.radio_mac, bands = excluded.bands, hw_type = excluded.hw_type,
              max_peers = excluded.max_peers, last_seen_at = excluded.last_seen_at'
         );
 
         foreach ($radios as $radio) {
-            $id = (string) ($radio['radio-mac'] ?? $radio['.id'] ?? '');
-            if ($id === '') continue;
+            $rawId = (string) ($radio['.id'] ?? '');
+            if ($rawId === '') continue;
+            $type = self::capsmanType((string) ($radio['_capsman_type'] ?? 'wifi'));
+            $stableId = (string) ($radio['radio-mac'] ?? $rawId);
+            $id = $type . ':' . $stableId;
             $seen[] = $id;
             [$capIdentity, $capBaseMac] = self::parseCapReference((string) ($radio['cap'] ?? ''));
             $statement->execute([
                 'router_id' => $routerId,
                 'mikrotik_id' => $id,
+                'mikrotik_raw_id' => $rawId,
+                'capsman_type' => $type,
                 'cap_identity' => $capIdentity,
                 'cap_base_mac' => $capBaseMac,
                 'interface_name' => $radio['interface'] ?? null,
@@ -271,7 +315,8 @@ final class SyncService
         $accessByMac = [];
         foreach ($snapshot['access_list'] ?? [] as $access) {
             $mac = self::mac($access['mac-address'] ?? '');
-            if ($mac !== '') $accessByMac[$mac][] = $access;
+            $type = self::capsmanType((string) ($access['_capsman_type'] ?? 'wifi'));
+            if ($mac !== '') $accessByMac[$type . '|' . $mac][] = $access;
         }
         $queueByTarget = [];
         foreach ($snapshot['queues'] ?? [] as $queue) {
@@ -285,16 +330,16 @@ final class SyncService
             $devices[self::mac((string) $device['mac_address'])] = $device;
         }
         $networks = [];
-        $networkStatement = $pdo->prepare('SELECT ssid, vlan_id FROM wifi_networks WHERE router_id = :router_id');
+        $networkStatement = $pdo->prepare('SELECT ssid, vlan_id, capsman_type FROM wifi_networks WHERE router_id = :router_id');
         $networkStatement->execute(['router_id' => $routerId]);
         foreach ($networkStatement->fetchAll() as $network) {
-            $networks[(string) $network['ssid']] = $network;
+            $networks[(string) $network['capsman_type'] . '|' . (string) $network['ssid']] = $network;
         }
         $radiosByInterface = [];
-        $radioStatement = $pdo->prepare('SELECT interface_name, cap_identity FROM wifi_radios_cache WHERE router_id = :router_id AND interface_name IS NOT NULL');
+        $radioStatement = $pdo->prepare('SELECT interface_name, cap_identity, capsman_type FROM wifi_radios_cache WHERE router_id = :router_id AND interface_name IS NOT NULL');
         $radioStatement->execute(['router_id' => $routerId]);
         foreach ($radioStatement->fetchAll() as $radio) {
-            $radiosByInterface[(string) $radio['interface_name']] = (string) ($radio['cap_identity'] ?: $radio['interface_name']);
+            $radiosByInterface[(string) $radio['capsman_type'] . '|' . (string) $radio['interface_name']] = (string) ($radio['cap_identity'] ?: $radio['interface_name']);
         }
         $previous = [];
         $previousStatement = $pdo->prepare('SELECT * FROM connected_clients WHERE router_id = :router_id');
@@ -305,12 +350,12 @@ final class SyncService
 
         $upsert = $pdo->prepare(
             'INSERT INTO connected_clients
-             (router_id, device_id, mac_address, ip_address, hostname, ssid, interface_name, access_point_name, band, vlan_id,
+             (router_id, device_id, capsman_type, mac_address, ip_address, hostname, ssid, interface_name, access_point_name, band, vlan_id,
               signal_dbm, tx_rate, rx_rate, tx_bps, rx_bps, uptime, last_activity, authorized, registration_status, first_seen_at, last_seen_at)
-             VALUES (:router_id, :device_id, :mac, :ip, :hostname, :ssid, :interface, :ap, :band, :vlan,
+             VALUES (:router_id, :device_id, :capsman_type, :mac, :ip, :hostname, :ssid, :interface, :ap, :band, :vlan,
               :signal, :tx_rate, :rx_rate, :tx_bps, :rx_bps, :uptime, :last_activity, :authorized, :status, :first_seen, :last_seen)
              ON CONFLICT(router_id, mac_address) DO UPDATE SET
-              device_id = excluded.device_id, ip_address = excluded.ip_address, hostname = excluded.hostname, ssid = excluded.ssid,
+              device_id = excluded.device_id, capsman_type = excluded.capsman_type, ip_address = excluded.ip_address, hostname = excluded.hostname, ssid = excluded.ssid,
               interface_name = excluded.interface_name, access_point_name = excluded.access_point_name, band = excluded.band,
               vlan_id = excluded.vlan_id, signal_dbm = excluded.signal_dbm, tx_rate = excluded.tx_rate, rx_rate = excluded.rx_rate,
               tx_bps = excluded.tx_bps, rx_bps = excluded.rx_bps, uptime = excluded.uptime, last_activity = excluded.last_activity,
@@ -322,8 +367,9 @@ final class SyncService
             $mac = self::mac($client['mac-address'] ?? '');
             if ($mac === '') continue;
             $currentMacs[] = $mac;
+            $type = self::capsmanType((string) ($client['_capsman_type'] ?? 'wifi'));
             $device = $devices[$mac] ?? null;
-            $accessRows = $accessByMac[$mac] ?? [];
+            $accessRows = $accessByMac[$type . '|' . $mac] ?? [];
             $access = self::approvedAccess($accessRows, (int) ($settings['approved_vlan_id'] ?? 0));
             $lease = self::preferredLease($leasesByMac[$mac] ?? [], (string) ($settings['approved_dhcp_server'] ?? ''));
             $ip = $lease['address'] ?? null;
@@ -345,10 +391,11 @@ final class SyncService
             $ssid = (string) ($client['ssid'] ?? '');
             $vlan = isset($client['vlan-id']) && $client['vlan-id'] !== ''
                 ? (int) $client['vlan-id']
-                : ($access ? (int) ($settings['approved_vlan_id'] ?? 0) : ($networks[$ssid]['vlan_id'] ?? null));
+                : ($access ? (int) ($settings['approved_vlan_id'] ?? 0) : ($networks[$type . '|' . $ssid]['vlan_id'] ?? null));
             $interface = (string) ($client['interface'] ?? '');
-            $accessPoint = $radiosByInterface[$interface] ?? ($interface !== '' ? $interface : null);
+            $accessPoint = $radiosByInterface[$type . '|' . $interface] ?? ($interface !== '' ? $interface : null);
             $firstSeen = $previous[$mac]['first_seen_at'] ?? $now;
+            $signal = isset($client['signal']) ? (int) $client['signal'] : (isset($client['rx-signal']) ? (int) $client['rx-signal'] : null);
             $this->notifications->observeDevice(
                 $pdo,
                 $routerId,
@@ -361,6 +408,7 @@ final class SyncService
             $upsert->execute([
                 'router_id' => $routerId,
                 'device_id' => $device['id'] ?? null,
+                'capsman_type' => $type,
                 'mac' => $mac,
                 'ip' => $ip,
                 'hostname' => $lease['host-name'] ?? null,
@@ -369,7 +417,7 @@ final class SyncService
                 'ap' => $accessPoint,
                 'band' => $client['band'] ?? null,
                 'vlan' => $vlan,
-                'signal' => isset($client['signal']) ? (int) $client['signal'] : null,
+                'signal' => $signal,
                 'tx_rate' => $client['tx-rate'] ?? null,
                 'rx_rate' => $client['rx-rate'] ?? null,
                 'tx_bps' => isset($client['tx-bits-per-second']) ? (int) $client['tx-bits-per-second'] : null,
@@ -382,24 +430,45 @@ final class SyncService
                 'last_seen' => $now,
             ]);
 
-            if (!isset($previous[$mac])) {
+            if ($device && (string) ($device['capsman_type'] ?? '') !== $type) {
+                $pdo->prepare('UPDATE devices SET capsman_type = :type, updated_at = CURRENT_TIMESTAMP WHERE id = :id')
+                    ->execute(['type' => $type, 'id' => (int) $device['id']]);
+            }
+
+            $roamed = isset($previous[$mac]) && (
+                (string) ($previous[$mac]['access_point_name'] ?? '') !== (string) ($accessPoint ?? '')
+                || (string) ($previous[$mac]['ssid'] ?? '') !== $ssid
+                || (string) ($previous[$mac]['capsman_type'] ?? 'wifi') !== $type
+            );
+            if (!isset($previous[$mac]) || $roamed) {
+                if ($roamed) {
+                    $pdo->prepare('UPDATE wifi_sessions SET disconnected_at = :now, disconnect_reason = :reason WHERE mac_address = :mac AND disconnected_at IS NULL')
+                        ->execute(['now' => $now, 'reason' => 'Přechod na jiný přístupový bod nebo síť', 'mac' => $mac]);
+                    $this->insertConnectionEvent($pdo, $routerId, $device['id'] ?? null, $type, $mac, 'roamed', $now, $ssid, $interface, $accessPoint, 'Přechod mezi AP', 'api');
+                } else {
+                    $this->insertConnectionEvent($pdo, $routerId, $device['id'] ?? null, $type, $mac, 'connected', $now, $ssid, $interface, $accessPoint, null, 'api');
+                }
                 $session = $pdo->prepare(
-                    'INSERT INTO wifi_sessions (device_id, mac_address, ip_address, ssid, access_point_name, signal_min, signal_max) VALUES (:device_id, :mac, :ip, :ssid, :ap, :signal, :signal)'
+                    'INSERT INTO wifi_sessions (router_id, device_id, capsman_type, mac_address, ip_address, ssid, access_point_name, source, signal_min, signal_max)
+                     VALUES (:router_id, :device_id, :capsman_type, :mac, :ip, :ssid, :ap, :source, :signal, :signal)'
                 );
                 $session->execute([
+                    'router_id' => $routerId,
                     'device_id' => $device['id'] ?? null,
+                    'capsman_type' => $type,
                     'mac' => $mac,
                     'ip' => $ip,
                     'ssid' => $ssid,
                     'ap' => $accessPoint,
-                    'signal' => isset($client['signal']) ? (int) $client['signal'] : null,
+                    'source' => 'api',
+                    'signal' => $signal,
                 ]);
-            } else {
+            } elseif ($signal !== null) {
                 $session = $pdo->prepare(
                     'UPDATE wifi_sessions SET signal_min = MIN(COALESCE(signal_min, :signal), :signal), signal_max = MAX(COALESCE(signal_max, :signal), :signal)
                      WHERE mac_address = :mac AND disconnected_at IS NULL'
                 );
-                $session->execute(['signal' => isset($client['signal']) ? (int) $client['signal'] : 0, 'mac' => $mac]);
+                $session->execute(['signal' => $signal, 'mac' => $mac]);
             }
         }
 
@@ -407,6 +476,20 @@ final class SyncService
             if (!in_array($mac, $currentMacs, true)) {
                 $close = $pdo->prepare('UPDATE wifi_sessions SET disconnected_at = :now WHERE mac_address = :mac AND disconnected_at IS NULL');
                 $close->execute(['now' => $now, 'mac' => $mac]);
+                $this->insertConnectionEvent(
+                    $pdo,
+                    $routerId,
+                    $row['device_id'] ?? null,
+                    self::capsmanType((string) ($row['capsman_type'] ?? 'wifi')),
+                    $mac,
+                    'disconnected',
+                    $now,
+                    (string) ($row['ssid'] ?? ''),
+                    (string) ($row['interface_name'] ?? ''),
+                    isset($row['access_point_name']) ? (string) $row['access_point_name'] : null,
+                    null,
+                    'api',
+                );
             }
         }
 
@@ -466,11 +549,83 @@ final class SyncService
         return [$identity, $baseMac];
     }
 
+    /** @param array<string,mixed> $network @return array<string,mixed> */
+    private static function networkCanonical(array $network, string $type): array
+    {
+        return [
+            'name' => (string) ($network['name'] ?? ''),
+            'ssid' => (string) ($network['ssid'] ?? $network['name'] ?? ''),
+            'band' => (string) ($network['channel.band'] ?? $network['channel'] ?? ''),
+            'vlan_id' => isset($network['datapath.vlan-id']) && $network['datapath.vlan-id'] !== '' ? (int) $network['datapath.vlan-id'] : null,
+            'enabled' => !self::yes($network['disabled'] ?? 'no'),
+            'hidden' => self::yes($network['hide-ssid'] ?? 'no'),
+            'capsman_type' => $type,
+        ];
+    }
+
+    private static function networkFieldLabel(string $field): string
+    {
+        return [
+            'name' => 'interní název', 'ssid' => 'SSID', 'band' => 'pásmo', 'vlan_id' => 'VLAN',
+            'enabled' => 'zapnutí sítě', 'hidden' => 'viditelnost SSID', 'capsman_type' => 'typ CAPsMANu',
+        ][$field] ?? $field;
+    }
+
+    private static function capsmanType(string $type): string
+    {
+        return strtolower($type) === 'legacy' ? 'legacy' : 'wifi';
+    }
+
+    private function insertConnectionEvent(
+        PDO $pdo,
+        int $routerId,
+        mixed $deviceId,
+        string $type,
+        string $mac,
+        string $event,
+        string $occurredAt,
+        string $ssid,
+        string $interface,
+        ?string $accessPoint,
+        ?string $reason,
+        string $source,
+    ): void {
+        $hash = hash('sha256', implode('|', [$routerId, $mac, $event, $occurredAt, $ssid, $interface, $source]));
+        $statement = $pdo->prepare(
+            'INSERT OR IGNORE INTO wifi_connection_events
+             (router_id, device_id, capsman_type, mac_address, event_type, occurred_at, ssid, interface_name, access_point_name, reason, source, event_hash)
+             VALUES (:router_id, :device_id, :capsman_type, :mac, :event, :occurred_at, :ssid, :interface, :ap, :reason, :source, :hash)'
+        );
+        $statement->execute([
+            'router_id' => $routerId,
+            'device_id' => $deviceId !== null ? (int) $deviceId : null,
+            'capsman_type' => $type,
+            'mac' => $mac,
+            'event' => $event,
+            'occurred_at' => $occurredAt,
+            'ssid' => $ssid !== '' ? $ssid : null,
+            'interface' => $interface !== '' ? $interface : null,
+            'ap' => $accessPoint,
+            'reason' => $reason,
+            'source' => $source,
+            'hash' => $hash,
+        ]);
+    }
+
     /** @param list<string> $warnings */
     private static function sectionFailed(array $warnings, string $section): bool
     {
         foreach ($warnings as $warning) {
             if (str_starts_with($warning, $section . ':')) return true;
+        }
+        return false;
+    }
+
+    /** @param list<string> $warnings */
+    private static function capsmanSectionFailed(array $warnings, string $section): bool
+    {
+        foreach ($warnings as $warning) {
+            if (str_starts_with($warning, 'wifi/' . $section . ':') || str_starts_with($warning, 'legacy/' . $section . ':')) return true;
         }
         return false;
     }

@@ -7,6 +7,7 @@ use WifiManager\Controllers\AuditController;
 use WifiManager\Controllers\AuthController;
 use WifiManager\Controllers\ClientsController;
 use WifiManager\Controllers\DashboardController;
+use WifiManager\Controllers\DevicesController;
 use WifiManager\Controllers\NetworksController;
 use WifiManager\Controllers\LoggingController;
 use WifiManager\Controllers\RegistrationActionsController;
@@ -48,12 +49,13 @@ $githubReleases = new GitHubReleaseService($config);
 
 $controllers = [
     'auth' => new AuthController($auth, $view, $audit),
-    'dashboard' => new DashboardController($database, $auth, $view),
+    'dashboard' => new DashboardController($database, $auth, $view, $audit),
     'clients' => new ClientsController($database, $auth, $view, $routerFactory, $audit),
     'registrations' => new RegistrationsController($database, $auth, $view, $settingsService, $jobs, $audit),
+    'devices' => new DevicesController($database, $auth, $view, $settingsService, $jobs, $audit, $logArchive),
     'registration-actions' => new RegistrationActionsController($database, $auth, $routerFactory, $audit),
     'networks' => new NetworksController($database, $auth, $view, $jobs, $audit, $crypto, $routerFactory),
-    'access-points' => new AccessPointsController($database, $auth, $view),
+    'access-points' => new AccessPointsController($database, $auth, $view, $jobs, $audit),
     'logging' => new LoggingController($auth, $view, $logArchive),
     'users' => new UsersController($database, $auth, $view, $audit),
     'audit' => new AuditController($database, $auth, $view),
@@ -81,12 +83,19 @@ $routes = [
     'POST /registrations/update' => ['registrations', 'update'],
     'POST /registrations/toggle' => ['registration-actions', 'toggle'],
     'POST /registrations/delete' => ['registration-actions', 'delete'],
+    'GET /devices' => ['devices', 'index'],
+    'GET /devices/detail' => ['devices', 'show'],
+    'POST /devices/repair' => ['devices', 'repair'],
     'GET /networks' => ['networks', 'index'],
     'POST /networks' => ['networks', 'store'],
     'POST /networks/toggle' => ['networks', 'toggle'],
     'POST /networks/delete' => ['networks', 'delete'],
     'POST /networks/password' => ['networks', 'password'],
+    'POST /networks/hidden' => ['networks', 'hidden'],
+    'POST /networks/conflict' => ['networks', 'resolveConflict'],
     'GET /access-points' => ['access-points', 'index'],
+    'POST /access-points/provision' => ['access-points', 'provision'],
+    'POST /jobs/clear' => ['dashboard', 'clearJobs'],
     'GET /syslog' => ['logging', 'syslog'],
     'GET /flows' => ['logging', 'flows'],
     'GET /users' => ['users', 'index'],
@@ -127,6 +136,8 @@ try {
         $fallback = match (true) {
             str_starts_with($path, '/clients') => '/clients',
             str_starts_with($path, '/registrations') => '/registrations',
+            str_starts_with($path, '/devices') => '/devices',
+            str_starts_with($path, '/access-points') => '/access-points',
             str_starts_with($path, '/networks') => '/networks',
             str_starts_with($path, '/users') => '/users',
             str_starts_with($path, '/settings') => '/settings',

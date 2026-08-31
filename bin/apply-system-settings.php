@@ -51,10 +51,11 @@ try {
         atomicWrite('/etc/rsyslog.d/30-wifimanager.conf', $rendered, 0644);
         command(['/usr/sbin/rsyslogd', '-N1']);
         try {
-            command(['/usr/bin/systemctl', 'disable', '--now', 'nfdump@default.service', 'nfdump.service']);
+            command(['/usr/bin/systemctl', 'disable', '--now', 'nfdump@default.service', 'nfdump.service', 'nprobe@none.service', 'nprobe.service']);
         } catch (\Throwable) {
             // Starší nebo ručně instalovaný nfdump nemusí mít výchozí jednotky.
         }
+        command(['/usr/bin/systemctl', 'reset-failed', 'rsyslog.service', 'wifimanager-nfcapd.service']);
         command(['/usr/bin/systemctl', 'restart', 'rsyslog.service']);
         command(['/usr/bin/systemctl', 'restart', 'wifimanager-nfcapd.service']);
         command(['/usr/bin/systemctl', 'start', 'wifimanager-retention.service']);
